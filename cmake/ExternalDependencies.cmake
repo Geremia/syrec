@@ -69,5 +69,112 @@ if(BUILD_MQT_SYREC_TESTS)
   list(APPEND FETCH_PACKAGES googletest)
 endif()
 
+set(FMT_VERSION
+    11.2.0
+    CACHE STRING "FMT library version")
+
+FetchContent_Declare(
+  fmt
+  GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+  GIT_TAG ${FMT_VERSION})
+list(APPEND FETCH_PACKAGES fmt)
+
+# The original CMake configuration in the ANTLR C++ git repository
+# (https://github.com/antlr/antlr4/blob/master/runtime/Cpp/cmake/ExternalAntlr4Cpp.cmake) uses the
+# ExternalProject_XX functions to configure the built of the ANTLR runtime and serves as a reference
+# from which this configuration file was built using the FetchContent_XX functions instead.
+set(ANTLR4_GIT_REPOSITORY "https://github.com/antlr/antlr4.git")
+
+# ANTLR v4.13.2 - minor version update could include "minor" breaking changes (see
+# https://github.com/antlr/antlr4?tab=readme-ov-file#versioning)
+set(ANTLR4_VERSION
+    4.13.2
+    CACHE STRING "ANTLR4 runtime version")
+
+# Note that the specified hash value refers to a commit in the 'origin/dev' branch of the ANTLR4
+# runtime git repository that is currently needed to be able to compile the runtime on windows using
+# the mvsc compiler (see https://github.com/antlr/antlr4/pull/4738). Due to the GIT_TAG option of
+# the FetchContent_Declare CMake function (inherited from the ExternalProject_Add(...) function)
+# only allowing commit hashes if the GIT_SHALLOW argument is disabled
+# (https://cmake.org/cmake/help/latest/module/ExternalProject.html#git), a full-checkout of the
+# ANTLR4 git repository is performed. If the needed changes are merge into the 'origin/master'
+# branch of the ANTLR runtime, the ANTLR4_TAG should be updated to the 'new' version number and the
+# GIT_SHALLOW argument enabled (i.e. set to ON) to only perform a clone of the git repository of
+# depth 1.
+set(ANTLR4_TAG
+    "7b53e13ba005b978e2603f3ff81a0cb7cc98f689"
+    CACHE STRING "Antlr4 runtime identifier (tag, branch or commit hash)")
+set(ANTLR_BUILD_CPP_TESTS
+    OFF
+    CACHE BOOL "Should the ANTLR4 C++ runtime tests be built")
+set(DISABLE_WARNINGS ON BOOL) # Do not report compiler warnings for build of ANTLR runtime
+set(ANTLR4_BUILD_AS_STATIC_LIBRARY
+    ON
+    CACHE BOOL "Build the ANTLR4 runtime as a static library (turned on by default)")
+set(ANTLR4_GIT_SHALLOW_CLONE
+    OFF
+    CACHE
+      BOOL
+      "Should a shallow clone of the ANTLR4 runtime be performed (only required when referring to branch or tag)"
+)
+
+message(STATUS "ANTLR git repo: ${ANTLR4_GIT_REPOSITORY}")
+message(STATUS "ANTLR git tag: ${ANTLR4_TAG}")
+
+if(NOT DEFINED WITH_STATIC_CRT AND (MSVC OR WIN32))
+  # using /MD flag for antlr4_runtime (for Visual C++ compilers only)
+  set(WITH_STATIC_CRT OFF)
+endif()
+
+if(ANTLR4_BUILD_AS_STATIC_LIBRARY)
+  set(ANTLR_BUILD_STATIC
+      ON
+      CACHE INTERNAL BOOL)
+  set(ANTLR_BUILD_SHARED
+      OFF
+      CACHE INTERNAL BOOL)
+  message(STATUS "ANTLR runtime library type: STATIC")
+
+  FetchContent_Declare(
+    antlr4_static
+    GIT_REPOSITORY ${ANTLR4_GIT_REPOSITORY}
+    GIT_SHALLOW ${ANTLR4_GIT_SHALLOW_CLONE}
+    GIT_TAG ${ANTLR4_TAG}
+    SOURCE_SUBDIR runtime/Cpp FIND_PACKAGE_ARGS ${ANTLR4_VERSION})
+  list(APPEND FETCH_PACKAGES antlr4_static)
+else()
+  set(ANTLR_BUILD_STATIC
+      OFF
+      CACHE INTERNAL BOOL)
+  set(ANTLR_BUILD_SHARED
+      ON
+      CACHE INTERNAL BOOL)
+  message(STATUS "ANTLR runtime library type: SHARED")
+
+  FetchContent_Declare(
+    antlr4_shared
+    GIT_REPOSITORY ${ANTLR4_GIT_REPOSITORY}
+    GIT_SHALLOW ${ANTLR4_GIT_SHALLOW_CLONE}
+    GIT_TAG ${ANTLR4_TAG}
+    SOURCE_SUBDIR runtime/Cpp FIND_PACKAGE_ARGS ${ANTLR4_VERSION})
+  list(APPEND FETCH_PACKAGES antlr4_shared)
+endif()
+
 # Make all declared dependencies available.
 FetchContent_MakeAvailable(${FETCH_PACKAGES})
+
+if(ANTLR4_BUILD_AS_STATIC_LIBRARY)
+  set(ANTLR4_INCLUDE_DIRS ${antlr4_static_SOURCE_DIR}/runtime/Cpp/runtime/src)
+  # When linking the ANTLR4 static runtime to a shared library or executable, the position
+  # independent code compiler options needs to be set otherwise the linker will fail
+  # https://github.com/antlr/antlr4/issues/2776
+  set_target_properties(antlr4_static PROPERTIES CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+  # Dlls do not use position independent code compiler option
+  # (https://github.com/BVLC/caffe/issues/5992)
+  if(NOT WIN32)
+    target_compile_options(antlr4_static PUBLIC -fPIC)
+  endif()
+else()
+  set(ANTLR4_INCLUDE_DIRS ${antlr4_shared_SOURCE_DIR}/runtime/Cpp/runtime/src)
+endif()

@@ -28,6 +28,7 @@
 #include <stack>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -163,21 +164,21 @@ namespace syrec {
         annotatableQuantumComputation.setOrUpdateGlobalQuantumOperationAnnotation(GATE_ANNOTATION_KEY_ASSOCIATED_STATEMENT_LINE_NUMBER, std::to_string(static_cast<std::size_t>(statement->lineNumber)));
 
         bool okay = true;
-        if (auto const* swapStat = dynamic_cast<SwapStatement*>(statement.get())) {
+        if (auto const* swapStat = dynamic_cast<SwapStatement*>(statement.get()); swapStat != nullptr) {
             okay = onStatement(*swapStat);
-        } else if (auto const* unaryStat = dynamic_cast<UnaryStatement*>(statement.get())) {
+        } else if (auto const* unaryStat = dynamic_cast<UnaryStatement*>(statement.get()); unaryStat != nullptr) {
             okay = onStatement(*unaryStat);
-        } else if (auto const* assignStat = dynamic_cast<AssignStatement*>(statement.get())) {
+        } else if (auto const* assignStat = dynamic_cast<AssignStatement*>(statement.get()); assignStat != nullptr) {
             okay = onStatement(*assignStat);
-        } else if (auto const* ifStat = dynamic_cast<IfStatement*>(statement.get())) {
+        } else if (auto const* ifStat = dynamic_cast<IfStatement*>(statement.get()); ifStat != nullptr) {
             okay = onStatement(*ifStat);
-        } else if (auto const* forStat = dynamic_cast<ForStatement*>(statement.get())) {
+        } else if (auto const* forStat = dynamic_cast<ForStatement*>(statement.get()); forStat != nullptr) {
             okay = onStatement(*forStat);
-        } else if (auto const* callStat = dynamic_cast<CallStatement*>(statement.get())) {
+        } else if (auto const* callStat = dynamic_cast<CallStatement*>(statement.get()); callStat != nullptr) {
             okay = onStatement(*callStat);
-        } else if (auto const* uncallStat = dynamic_cast<UncallStatement*>(statement.get())) {
+        } else if (auto const* uncallStat = dynamic_cast<UncallStatement*>(statement.get()); uncallStat != nullptr) {
             okay = onStatement(*uncallStat);
-        } else if (auto const* skipStat = statement.get()) {
+        } else if (auto const* skipStat = statement.get(); skipStat != nullptr) {
             okay = onStatement(*skipStat);
         } else {
             okay = false;
@@ -202,12 +203,12 @@ namespace syrec {
         std::vector<qc::Qubit> var;
         getVariables(statement.var, var);
 
-        switch (statement.op) {
-            case UnaryStatement::Invert:
+        switch (statement.unaryOperation) {
+            case UnaryStatement::UnaryOperation::Invert:
                 return bitwiseNegation(annotatableQuantumComputation, var);
-            case UnaryStatement::Increment:
+            case UnaryStatement::UnaryOperation::Increment:
                 return increment(annotatableQuantumComputation, var);
-            case UnaryStatement::Decrement:
+            case UnaryStatement::UnaryOperation::Decrement:
                 return decrement(annotatableQuantumComputation, var);
             default:
                 return false;
@@ -221,20 +222,20 @@ namespace syrec {
 
         getVariables(statement.lhs, lhs);
         opRhsLhsExpression(statement.rhs, d);
-        bool synthesisOfAssignmentOk = SyrecSynthesis::onExpression(statement.rhs, rhs, lhs, statement.op);
+        bool synthesisOfAssignmentOk = SyrecSynthesis::onExpression(statement.rhs, rhs, lhs, statement.assignOperation);
         opVec.clear();
 
-        switch (statement.op) {
-            case AssignStatement::Add: {
-                synthesisOfAssignmentOk &= assignAdd(lhs, rhs, statement.op);
+        switch (statement.assignOperation) {
+            case AssignStatement::AssignOperation::Add: {
+                synthesisOfAssignmentOk &= assignAdd(lhs, rhs, statement.assignOperation);
                 break;
             }
-            case AssignStatement::Subtract: {
-                synthesisOfAssignmentOk &= assignSubtract(lhs, rhs, statement.op);
+            case AssignStatement::AssignOperation::Subtract: {
+                synthesisOfAssignmentOk &= assignSubtract(lhs, rhs, statement.assignOperation);
                 break;
             }
-            case AssignStatement::Exor: {
-                synthesisOfAssignmentOk &= assignExor(lhs, rhs, statement.op);
+            case AssignStatement::AssignOperation::Exor: {
+                synthesisOfAssignmentOk &= assignExor(lhs, rhs, statement.assignOperation);
                 break;
             }
             default:
@@ -244,12 +245,21 @@ namespace syrec {
     }
 
     bool SyrecSynthesis::onStatement(const IfStatement& statement) {
+        OperationVariant guardExpressionTopLevelOperation = BinaryExpression::BinaryOperation::Add;
+        if (auto const* binary = dynamic_cast<BinaryExpression*>(statement.condition.get()); binary != nullptr) {
+            guardExpressionTopLevelOperation = binary->binaryOperation;
+        } else if (auto const* shift = dynamic_cast<ShiftExpression*>(statement.condition.get()); shift != nullptr) {
+            guardExpressionTopLevelOperation = shift->shiftOperation;
+        } else if (auto const* unary = dynamic_cast<UnaryExpression*>(statement.condition.get()); unary != nullptr) {
+            guardExpressionTopLevelOperation = unary->unaryOperation;
+        }
+
         // calculate expression
         std::vector<qc::Qubit> expressionResult;
+        const bool             synthesisOfGuardExprOk = onExpression(statement.condition, expressionResult, {}, guardExpressionTopLevelOperation);
 
-        const bool synthesisOfStatementOk = onExpression(statement.condition, expressionResult, {}, 0U);
         assert(expressionResult.size() == 1U);
-        if (!synthesisOfStatementOk) {
+        if (!synthesisOfGuardExprOk) {
             return false;
         }
 
@@ -390,36 +400,36 @@ namespace syrec {
         return true;
     }
 
-    bool SyrecSynthesis::onExpression(const Expression::ptr& expression, std::vector<qc::Qubit>& lines, std::vector<qc::Qubit> const& lhsStat, unsigned op) {
-        if (auto const* numeric = dynamic_cast<NumericExpression*>(expression.get())) {
+    bool SyrecSynthesis::onExpression(const Expression::ptr& expression, std::vector<qc::Qubit>& lines, std::vector<qc::Qubit> const& lhsStat, const OperationVariant operationVariant) {
+        if (auto const* numeric = dynamic_cast<NumericExpression*>(expression.get()); numeric != nullptr) {
             return onExpression(*numeric, lines);
         }
-        if (auto const* variable = dynamic_cast<VariableExpression*>(expression.get())) {
+        if (auto const* variable = dynamic_cast<VariableExpression*>(expression.get()); variable != nullptr) {
             return onExpression(*variable, lines);
         }
-        if (auto const* binary = dynamic_cast<BinaryExpression*>(expression.get())) {
-            return onExpression(*binary, lines, lhsStat, op);
+        if (auto const* binary = dynamic_cast<BinaryExpression*>(expression.get()); binary != nullptr) {
+            return onExpression(*binary, lines, lhsStat, operationVariant);
         }
-        if (auto const* shift = dynamic_cast<ShiftExpression*>(expression.get())) {
-            return onExpression(*shift, lines, lhsStat, op);
+        if (auto const* shift = dynamic_cast<ShiftExpression*>(expression.get()); shift != nullptr) {
+            return onExpression(*shift, lines, lhsStat, operationVariant);
         }
-        if (auto const* unary = dynamic_cast<UnaryExpression*>(expression.get())) {
-            return onExpression(*unary, lines, lhsStat, op);
+        if (auto const* unary = dynamic_cast<UnaryExpression*>(expression.get()); unary != nullptr) {
+            return onExpression(*unary, lines, lhsStat, operationVariant);
         }
         return false;
     }
 
-    bool SyrecSynthesis::onExpression(const ShiftExpression& expression, std::vector<qc::Qubit>& lines, std::vector<qc::Qubit> const& lhsStat, unsigned op) {
+    bool SyrecSynthesis::onExpression(const ShiftExpression& expression, std::vector<qc::Qubit>& lines, std::vector<qc::Qubit> const& lhsStat, const OperationVariant operationVariant) {
         std::vector<qc::Qubit> lhs;
-        if (!onExpression(expression.lhs, lhs, lhsStat, op)) {
+        if (!onExpression(expression.lhs, lhs, lhsStat, operationVariant)) {
             return false;
         }
 
         const qc::Qubit rhs = expression.rhs->evaluate(loopMap);
-        switch (expression.op) {
-            case ShiftExpression::Left: // <<
+        switch (expression.shiftOperation) {
+            case ShiftExpression::ShiftOperation::Left: // <<
                 return getConstantLines(expression.bitwidth(), 0U, lines) && leftShift(annotatableQuantumComputation, lines, lhs, rhs);
-            case ShiftExpression::Right: // <<
+            case ShiftExpression::ShiftOperation::Right: // <<
                 return getConstantLines(expression.bitwidth(), 0U, lines) &&
                        rightShift(annotatableQuantumComputation, lines, lhs, rhs);
             default:
@@ -427,13 +437,13 @@ namespace syrec {
         }
     }
 
-    bool SyrecSynthesis::onExpression(const UnaryExpression& expression, std::vector<qc::Qubit>& lines, std::vector<qc::Qubit> const& lhsStat, unsigned op) {
+    bool SyrecSynthesis::onExpression(const UnaryExpression& expression, std::vector<qc::Qubit>& lines, std::vector<qc::Qubit> const& lhsStat, const OperationVariant operationVariant) {
         std::vector<qc::Qubit> innerExprLines;
-        if (!onExpression(expression.expr, innerExprLines, lhsStat, op)) {
+        if (!onExpression(expression.expr, innerExprLines, lhsStat, operationVariant)) {
             return false;
         }
 
-        if (expression.op == UnaryExpression::LogicalNegation && innerExprLines.size() != 1) {
+        if (expression.unaryOperation == UnaryExpression::UnaryOperation::LogicalNegation && innerExprLines.size() != 1) {
             std::cerr << "Logical negation operation can only be used for expressions with a bitwidth of 1\n";
             return false;
         }
@@ -457,45 +467,55 @@ namespace syrec {
         return true;
     }
 
-    bool SyrecSynthesis::onExpression(const BinaryExpression& expression, std::vector<qc::Qubit>& lines, std::vector<qc::Qubit> const& lhsStat, unsigned op) {
+    bool SyrecSynthesis::onExpression(const BinaryExpression& expression, std::vector<qc::Qubit>& lines, std::vector<qc::Qubit> const& lhsStat, const OperationVariant operationVariant) {
         std::vector<qc::Qubit> lhs;
         std::vector<qc::Qubit> rhs;
 
-        if (!onExpression(expression.lhs, lhs, lhsStat, op) || !onExpression(expression.rhs, rhs, lhsStat, op)) {
+        if (!onExpression(expression.lhs, lhs, lhsStat, operationVariant) || !onExpression(expression.rhs, rhs, lhsStat, operationVariant)) {
             return false;
         }
 
         expLhss.push(lhs);
         expRhss.push(rhs);
-        expOpp.push(expression.op);
+        expOpp.push(expression.binaryOperation);
 
-        if ((expOpp.size() == opVec.size()) && (expOpp.top() == op)) {
-            return true;
+        // The previous implementation used unscoped enum declarations for both the operations of a BinaryExpression as well as for an AssignStatement.
+        // Additionally, the expOpp and opVec data structures used to store both types of operations as unsigned integers (with unscoped enums being implicitly convertible to unsigned integers)
+        // thus the comparison between the elements was possible. Since we are now storing the scoped enum values instead, we need to separately handle binary and assignment operations when
+        // comparing the two types with the latter requiring a conversion to determine its matching binary operation counterpart. While the scoped enum values can be converted to their underlying
+        // numeric data type (or any other type), they require an explicit cast instead.
+        if (expOpp.size() == opVec.size()) {
+            if (std::holds_alternative<BinaryExpression::BinaryOperation>(operationVariant) && expOpp.top() == std::get<BinaryExpression::BinaryOperation>(operationVariant)) {
+                return true;
+            }
+            if (std::optional<BinaryExpression::BinaryOperation> mappedToBinaryOperationFromAssignmentOperation = std::holds_alternative<AssignStatement::AssignOperation>(operationVariant) ? tryMapAssignmentToBinaryOperation(std::get<AssignStatement::AssignOperation>(operationVariant)) : std::nullopt; mappedToBinaryOperationFromAssignmentOperation.has_value() && expOpp.top() == *mappedToBinaryOperationFromAssignmentOperation) {
+                return true;
+            }
         }
 
         bool synthesisOfExprOk = true;
-        switch (expression.op) {
-            case BinaryExpression::Add: // +
+        switch (expression.binaryOperation) {
+            case BinaryExpression::BinaryOperation::Add: // +
                 synthesisOfExprOk = expAdd(expression.bitwidth(), lines, lhs, rhs);
                 break;
-            case BinaryExpression::Subtract: // -
+            case BinaryExpression::BinaryOperation::Subtract: // -
                 synthesisOfExprOk = expSubtract(expression.bitwidth(), lines, lhs, rhs);
                 break;
-            case BinaryExpression::Exor: // ^
+            case BinaryExpression::BinaryOperation::Exor: // ^
                 synthesisOfExprOk = expExor(expression.bitwidth(), lines, lhs, rhs);
                 break;
-            case BinaryExpression::Multiply: // *
+            case BinaryExpression::BinaryOperation::Multiply: // *
                 synthesisOfExprOk = getConstantLines(expression.bitwidth(), 0U, lines) && multiplication(annotatableQuantumComputation, lines, lhs, rhs);
                 break;
-            case BinaryExpression::Divide: // /
+            case BinaryExpression::BinaryOperation::Divide: // /
                 synthesisOfExprOk = getConstantLines(expression.bitwidth(), 0U, lines) && division(annotatableQuantumComputation, lines, lhs, rhs);
                 break;
-            case BinaryExpression::Modulo: { // %
+            case BinaryExpression::BinaryOperation::Modulo: { // %
                 synthesisOfExprOk = getConstantLines(expression.bitwidth(), 0U, lines);
                 std::vector<qc::Qubit> quot;
                 synthesisOfExprOk &= getConstantLines(expression.bitwidth(), 0U, quot) && bitwiseCnot(annotatableQuantumComputation, lines, lhs) && modulo(annotatableQuantumComputation, quot, lines, rhs);
             } break;
-            case BinaryExpression::LogicalAnd: { // &&
+            case BinaryExpression::BinaryOperation::LogicalAnd: { // &&
                 const std::optional<qc::Qubit> ancillaryQubitForIntermediateResult = getConstantLine(false);
                 if (ancillaryQubitForIntermediateResult.has_value()) {
                     lines.emplace_back(*ancillaryQubitForIntermediateResult);
@@ -505,7 +525,7 @@ namespace syrec {
                 }
                 break;
             }
-            case BinaryExpression::LogicalOr: { // ||
+            case BinaryExpression::BinaryOperation::LogicalOr: { // ||
                 const std::optional<qc::Qubit> ancillaryQubitForIntermediateResult = getConstantLine(false);
                 if (ancillaryQubitForIntermediateResult.has_value()) {
                     lines.emplace_back(*ancillaryQubitForIntermediateResult);
@@ -516,13 +536,13 @@ namespace syrec {
 
                 break;
             }
-            case BinaryExpression::BitwiseAnd: // &
+            case BinaryExpression::BinaryOperation::BitwiseAnd: // &
                 synthesisOfExprOk = getConstantLines(expression.bitwidth(), 0U, lines) && bitwiseAnd(annotatableQuantumComputation, lines, lhs, rhs);
                 break;
-            case BinaryExpression::BitwiseOr: // |
+            case BinaryExpression::BinaryOperation::BitwiseOr: // |
                 synthesisOfExprOk = getConstantLines(expression.bitwidth(), 0U, lines) && bitwiseOr(annotatableQuantumComputation, lines, lhs, rhs);
                 break;
-            case BinaryExpression::LessThan: { // <
+            case BinaryExpression::BinaryOperation::LessThan: { // <
                 const std::optional<qc::Qubit> ancillaryQubitForIntermediateResult = getConstantLine(false);
                 if (ancillaryQubitForIntermediateResult.has_value()) {
                     lines.emplace_back(*ancillaryQubitForIntermediateResult);
@@ -533,7 +553,7 @@ namespace syrec {
 
                 break;
             }
-            case BinaryExpression::GreaterThan: { // >
+            case BinaryExpression::BinaryOperation::GreaterThan: { // >
                 const std::optional<qc::Qubit> ancillaryQubitForIntermediateResult = getConstantLine(false);
                 if (ancillaryQubitForIntermediateResult.has_value()) {
                     lines.emplace_back(*ancillaryQubitForIntermediateResult);
@@ -544,7 +564,7 @@ namespace syrec {
 
                 break;
             }
-            case BinaryExpression::Equals: { // =
+            case BinaryExpression::BinaryOperation::Equals: { // =
                 const std::optional<qc::Qubit> ancillaryQubitForIntermediateResult = getConstantLine(false);
                 if (ancillaryQubitForIntermediateResult.has_value()) {
                     lines.emplace_back(*ancillaryQubitForIntermediateResult);
@@ -555,7 +575,7 @@ namespace syrec {
 
                 break;
             }
-            case BinaryExpression::NotEquals: { // !=
+            case BinaryExpression::BinaryOperation::NotEquals: { // !=
                 const std::optional<qc::Qubit> ancillaryQubitForIntermediateResult = getConstantLine(false);
                 if (ancillaryQubitForIntermediateResult.has_value()) {
                     lines.emplace_back(*ancillaryQubitForIntermediateResult);
@@ -566,7 +586,7 @@ namespace syrec {
 
                 break;
             }
-            case BinaryExpression::LessEquals: { // <=
+            case BinaryExpression::BinaryOperation::LessEquals: { // <=
                 const std::optional<qc::Qubit> ancillaryQubitForIntermediateResult = getConstantLine(false);
                 if (ancillaryQubitForIntermediateResult.has_value()) {
                     lines.emplace_back(*ancillaryQubitForIntermediateResult);
@@ -577,7 +597,7 @@ namespace syrec {
 
                 break;
             }
-            case BinaryExpression::GreaterEquals: { // >=
+            case BinaryExpression::BinaryOperation::GreaterEquals: { // >=
                 const std::optional<qc::Qubit> ancillaryQubitForIntermediateResult = getConstantLine(false);
                 if (ancillaryQubitForIntermediateResult.has_value()) {
                     lines.emplace_back(*ancillaryQubitForIntermediateResult);
@@ -994,7 +1014,7 @@ namespace syrec {
         return synthesisOk;
     }
 
-    bool SyrecSynthesis::expressionOpInverse([[maybe_unused]] unsigned op, [[maybe_unused]] const std::vector<qc::Qubit>& expLhs, [[maybe_unused]] const std::vector<qc::Qubit>& expRhs) {
+    bool SyrecSynthesis::expressionOpInverse([[maybe_unused]] const BinaryExpression::BinaryOperation binaryOperation, [[maybe_unused]] const std::vector<qc::Qubit>& expLhs, [[maybe_unused]] const std::vector<qc::Qubit>& expRhs) {
         return true;
     }
 
@@ -1076,12 +1096,40 @@ namespace syrec {
         return couldQubitsForConstantLinesBeFetched;
     }
 
+    std::optional<AssignStatement::AssignOperation> SyrecSynthesis::tryMapBinaryToAssignmentOperation(BinaryExpression::BinaryOperation binaryOperation) noexcept {
+        switch (binaryOperation) {
+            case BinaryExpression::BinaryOperation::Add:
+                return AssignStatement::AssignOperation::Add;
+            case BinaryExpression::BinaryOperation::Subtract:
+                return AssignStatement::AssignOperation::Subtract;
+            case BinaryExpression::BinaryOperation::Exor:
+                return AssignStatement::AssignOperation::Exor;
+            default:
+                return std::nullopt;
+        }
+    }
+
+    std::optional<BinaryExpression::BinaryOperation> SyrecSynthesis::tryMapAssignmentToBinaryOperation(AssignStatement::AssignOperation assignOperation) noexcept {
+        switch (assignOperation) {
+            case AssignStatement::AssignOperation::Add:
+                return BinaryExpression::BinaryOperation::Add;
+
+            case AssignStatement::AssignOperation::Subtract:
+                return BinaryExpression::BinaryOperation::Subtract;
+
+            case AssignStatement::AssignOperation::Exor:
+                return BinaryExpression::BinaryOperation::Exor;
+            default:
+                return std::nullopt;
+        }
+    }
+
     bool SyrecSynthesis::addVariable(AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<unsigned>& dimensions, const Variable::ptr& var, const std::string& arraystr) {
         bool couldQubitsForVariableBeAdded = true;
         if (dimensions.empty()) {
             for (qc::Qubit i = 0U; i < var->bitwidth && couldQubitsForVariableBeAdded; ++i) {
                 const std::string qubitLabel     = var->name + arraystr + "." + std::to_string(i);
-                const bool        isGarbageQubit = var->type == Variable::In || var->type == Variable::Wire;
+                const bool        isGarbageQubit = var->type == Variable::Type::In || var->type == Variable::Type::Wire;
                 couldQubitsForVariableBeAdded &= annotatableQuantumComputation.addNonAncillaryQubit(qubitLabel, isGarbageQubit).has_value();
             }
         } else {
