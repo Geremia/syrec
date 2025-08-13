@@ -10,6 +10,7 @@
 
 #include "core/annotatable_quantum_computation.hpp"
 
+#include "core/qubit_inlining_stack.hpp"
 #include "ir/Definitions.hpp"
 #include "ir/operations/Control.hpp"
 #include "ir/operations/OpType.hpp"
@@ -23,6 +24,12 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+namespace {
+    bool isInlineStackNotSetOrEmpty(const syrec::QubitInliningStack::ptr& inlineStackToCheck) {
+        return inlineStackToCheck == nullptr || inlineStackToCheck->size() == 0;
+    }
+} // namespace
 
 using namespace syrec;
 
@@ -101,8 +108,8 @@ bool AnnotatableQuantumComputation::addOperationsImplementingFredkinGate(const q
     return currNumQuantumOperations > prevNumQuantumOperations && annotateAllQuantumOperationsAtPositions(prevNumQuantumOperations, currNumQuantumOperations, {});
 }
 
-std::optional<qc::Qubit> AnnotatableQuantumComputation::addNonAncillaryQubit(const std::string& qubitLabel, bool isGarbageQubit) {
-    if (!canQubitsBeAddedToQuantumComputation || qubitLabel.empty() || getQuantumRegisters().count(qubitLabel) != 0) {
+std::optional<qc::Qubit> AnnotatableQuantumComputation::addNonAncillaryQubit(const std::string& qubitLabel, bool isGarbageQubit, const std::optional<InlinedQubitInformation>& optionalInliningInformation) {
+    if (!canQubitsBeAddedToQuantumComputation || qubitLabel.empty() || getQuantumRegisters().count(qubitLabel) != 0 || inlinedQubitsInformationLookup.count(qubitLabel) != 0 || (optionalInliningInformation.has_value() && ((optionalInliningInformation->inlineStack.has_value() && isInlineStackNotSetOrEmpty(optionalInliningInformation->inlineStack.value())) || !optionalInliningInformation->userDeclaredQubitLabel.has_value() || optionalInliningInformation->userDeclaredQubitLabel->empty()))) {
         return std::nullopt;
     }
 
@@ -112,11 +119,15 @@ std::optional<qc::Qubit> AnnotatableQuantumComputation::addNonAncillaryQubit(con
     if (isGarbageQubit) {
         setLogicalQubitGarbage(qubitIndex);
     }
+
+    if (optionalInliningInformation.has_value()) {
+        inlinedQubitsInformationLookup[qubitLabel] = *optionalInliningInformation;
+    }
     return qubitIndex;
 }
 
-std::optional<qc::Qubit> AnnotatableQuantumComputation::addPreliminaryAncillaryQubit(const std::string& qubitLabel, bool initialStateOfQubit) {
-    if (!canQubitsBeAddedToQuantumComputation || qubitLabel.empty() || getQuantumRegisters().count(qubitLabel) != 0) {
+std::optional<qc::Qubit> AnnotatableQuantumComputation::addPreliminaryAncillaryQubit(const std::string& qubitLabel, bool initialStateOfQubit, const InlinedQubitInformation& inliningInformation) {
+    if (!canQubitsBeAddedToQuantumComputation || qubitLabel.empty() || getQuantumRegisters().count(qubitLabel) != 0 || inlinedQubitsInformationLookup.count(qubitLabel) != 0 || inliningInformation.userDeclaredQubitLabel.has_value() || (inliningInformation.inlineStack.has_value() && isInlineStackNotSetOrEmpty(inliningInformation.inlineStack.value()))) {
         return std::nullopt;
     }
     const auto            qubitIndex = static_cast<qc::Qubit>(getNqubits());
@@ -124,6 +135,7 @@ std::optional<qc::Qubit> AnnotatableQuantumComputation::addPreliminaryAncillaryQ
 
     addQubitRegister(qubitSize, qubitLabel);
     addedAncillaryQubitIndices.emplace(qubitIndex);
+    inlinedQubitsInformationLookup[qubitLabel] = inliningInformation;
 
     if (initialStateOfQubit) {
         // Since ancillary qubits are assumed to have an initial value of
@@ -336,6 +348,13 @@ bool AnnotatableQuantumComputation::setOrUpdateAnnotationOfQuantumOperation(std:
         annotationsForQuantumOperation.emplace(std::string(annotationKey), annotationValue);
     }
     return true;
+}
+
+const AnnotatableQuantumComputation::InlinedQubitInformation* AnnotatableQuantumComputation::getInliningInformationOfQubit(const std::string& qubitLabel) const {
+    if (inlinedQubitsInformationLookup.count(qubitLabel) == 0) {
+        return nullptr;
+    }
+    return &inlinedQubitsInformationLookup.at(qubitLabel);
 }
 
 // BEGIN NON-PUBLIC FUNCTIONALITY

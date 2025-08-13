@@ -8,6 +8,7 @@
  * Licensed under the MIT License
  */
 
+#include "algorithms/synthesis/internal_qubit_label_builder.hpp"
 #include "core/syrec/parser/utils/custom_error_messages.hpp"
 #include "core/syrec/parser/utils/parser_messages_container.hpp"
 #include "core/syrec/program.hpp"
@@ -21,6 +22,16 @@ using namespace syrec_parser_error_tests;
 TEST_F(SyrecParserErrorTestsFixture, OmittingVariableIdentifierInVariableAccessCausesError) {
     recordSyntaxError(Message::Position(1, 26), "missing IDENT at '.'");
     performTestExecution("module main(out a(4)) ++= .0");
+}
+
+TEST_F(SyrecParserErrorTestsFixture, UsageOfReservedIdentifierPrefixInIdentifierOfModuleParameterCausesError) {
+    buildAndRecordExpectedSemanticError<SemanticError::ReservedIdentifierPrefixUsed>(Message::Position(1, 27), "__qTest", syrec::InternalQubitLabelBuilder::INTERNAL_QUBIT_LABEL_PREFIX);
+    performTestExecution("module main(inout a(4), in __qTest(4)) a += __qTest");
+}
+
+TEST_F(SyrecParserErrorTestsFixture, UsageOfReservedIdentifierPrefixInIdentifierOfLocalModuleVariableCausesError) {
+    buildAndRecordExpectedSemanticError<SemanticError::ReservedIdentifierPrefixUsed>(Message::Position(1, 29), "__qTest", syrec::InternalQubitLabelBuilder::INTERNAL_QUBIT_LABEL_PREFIX);
+    performTestExecution("module main(inout a(4)) wire __qTest(4) a += __qTest");
 }
 
 TEST_F(SyrecParserErrorTestsFixture, OmittingOpeningBracketForAccessOnDimensionOfVariableCausesError) {

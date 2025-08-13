@@ -8,6 +8,7 @@
  * Licensed under the MIT License
  */
 
+#include "algorithms/synthesis/internal_qubit_label_builder.hpp"
 #include "core/syrec/parser/utils/custom_error_messages.hpp"
 #include "core/syrec/parser/utils/parser_messages_container.hpp"
 #include "core/syrec/program.hpp"
@@ -32,6 +33,11 @@ TEST_F(SyrecParserErrorTestsFixture, InvalidSymbolInModuleIdentifierCausesError)
 TEST_F(SyrecParserErrorTestsFixture, EmptyModuleIdentifierCausesError) {
     recordSyntaxError(Message::Position(1, 7), "missing IDENT at '('");
     performTestExecution("module () skip");
+}
+
+TEST_F(SyrecParserErrorTestsFixture, UsageOfReservedIdentifierPrefixInModuleIdentifierCausesError) {
+    buildAndRecordExpectedSemanticError<SemanticError::ReservedIdentifierPrefixUsed>(Message::Position(1, 7), "__q_test", syrec::InternalQubitLabelBuilder::INTERNAL_QUBIT_LABEL_PREFIX);
+    performTestExecution("module __q_test(inout a(4)) a += 2");
 }
 
 TEST_F(SyrecParserErrorTestsFixture, OmittingModuleParameterListOpeningBracketCausesError) {

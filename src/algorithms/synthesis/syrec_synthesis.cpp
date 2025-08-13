@@ -10,9 +10,11 @@
 
 #include "algorithms/synthesis/syrec_synthesis.hpp"
 
+#include "algorithms/synthesis/internal_qubit_label_builder.hpp"
 #include "algorithms/synthesis/statement_execution_order_stack.hpp"
 #include "core/annotatable_quantum_computation.hpp"
 #include "core/properties.hpp"
+#include "core/qubit_inlining_stack.hpp"
 #include "core/syrec/expression.hpp"
 #include "core/syrec/program.hpp"
 #include "core/syrec/statement.hpp"
@@ -57,7 +59,12 @@ namespace syrec {
     }
 
     bool SyrecSynthesis::addVariables(const Variable::vec& variables) {
-        bool couldQubitsForVariablesBeAdded = true;
+        // We only want to record inlining information for qubits that are actually inlined (i.e. variables of type 'wire' and 'state').
+        // Note that all variables added in this call shared the same inlining stack thus we reuse the latter when adding the former.
+        const bool                                   isAnyVarALocalModuleVarBasedOnVarType = std::any_of(variables.cbegin(), variables.cend(), [](const Variable::ptr& variable) { return variable->type == Variable::Type::Wire || variable->type == Variable::Type::State; });
+        const std::optional<QubitInliningStack::ptr> inlineStack                           = isAnyVarALocalModuleVarBasedOnVarType ? getLastCreatedModuleCallStackInstance() : std::nullopt;
+        bool                                         couldQubitsForVariablesBeAdded        = shouldQubitInlineInformationBeRecorded() && isAnyVarALocalModuleVarBasedOnVarType ? inlineStack.has_value() : true;
+
         for (std::size_t i = 0; i < variables.size() && couldQubitsForVariablesBeAdded; ++i) {
             const auto& variable = variables[i];
             // entry in var lines map
@@ -65,7 +72,7 @@ namespace syrec {
                 std::cerr << "Tried to add duplicate variable with identifier " << variable->name << " to internal lookup\n";
                 return false;
             }
-            couldQubitsForVariablesBeAdded &= addVariable(annotatableQuantumComputation, variable->dimensions, variable, std::string());
+            couldQubitsForVariablesBeAdded &= addVariable(annotatableQuantumComputation, variable->dimensions, variable, std::string(), inlineStack);
         }
         return couldQubitsForVariablesBeAdded;
     }
@@ -77,17 +84,17 @@ namespace syrec {
         }
 
         // Settings parsing
-        auto mainModule = get<std::string>(settings, "main_module", std::string());
+        const auto& expectedMainModuleIdentifier = settings != nullptr ? settings->get<std::string>(MAIN_MODULE_IDENTIFIER_CONFIG_KEY, "") : "";
         // Run-time measuring
         const TimeStamp simulationStartTime = std::chrono::steady_clock::now();
 
         // get the main module
         Module::ptr main;
 
-        if (!mainModule.empty()) {
-            main = program.findModule(mainModule);
+        if (!expectedMainModuleIdentifier.empty()) {
+            main = program.findModule(expectedMainModuleIdentifier);
             if (!main) {
-                std::cerr << "Program has no module: " << mainModule << "\n";
+                std::cerr << "Program has no module: " << expectedMainModuleIdentifier << "\n";
                 return false;
             }
         } else {
@@ -99,6 +106,16 @@ namespace syrec {
 
         // declare as top module
         synthesizer->setMainModule(main);
+        if (settings != nullptr && settings->get<bool>(GENERATE_INLINE_DEBUG_INFORMATION_CONFIG_KEY, false)) {
+            auto mainModuleCallStackEntry         = QubitInliningStack::QubitInliningStackEntry();
+            mainModuleCallStackEntry.targetModule = main;
+
+            auto mainModuleInlineStack = std::make_shared<QubitInliningStack>();
+            mainModuleInlineStack->push(mainModuleCallStackEntry);
+
+            synthesizer->moduleCallStackInstances = std::vector<QubitInliningStack::ptr>();
+            synthesizer->moduleCallStackInstances->emplace_back(mainModuleInlineStack);
+        }
 
         // create lines for global variables
         if (!synthesizer->addVariables(main->parameters)) {
@@ -187,9 +204,53 @@ namespace syrec {
         } else if (auto const* forStat = dynamic_cast<ForStatement*>(statement.get()); forStat != nullptr) {
             okay = onStatement(*forStat);
         } else if (auto const* callStat = dynamic_cast<CallStatement*>(statement.get()); callStat != nullptr) {
-            okay = onStatement(*callStat);
+            if (!shouldQubitInlineInformationBeRecorded()) {
+                okay = onStatement(*callStat);
+            } else {
+                const std::optional<QubitInliningStack::ptr> lastCreatedQubitInlineStack = getLastCreatedModuleCallStackInstance();
+                // Our goal is to shared the current qubit inline stack for all qubits created for the local variables of the currently processed module as well as for all ancillary qubits generated while
+                // synthesizing the statements of the current module, thus we proceed as follows:
+                // I.   Create a copy of the current qubit inline stack
+                // II.  Push a new entry on the inline stack for the new called module and synthesize the statements of said module with the new call stack instance created in I.
+                // III. Discard the call stack instance of II. so the call stack prior to I. can be reused again for the remainder of the statements of the parent module that contained the currently processed CallStatement.
+                if (const std::optional<QubitInliningStack::ptr> optionalCopyOfLastCreatedQubitInlineStack = lastCreatedQubitInlineStack.has_value() ? createInsertAndGetCopyOfLastCreatedCallStackInstance() : std::nullopt; optionalCopyOfLastCreatedQubitInlineStack.has_value() && optionalCopyOfLastCreatedQubitInlineStack->get()->size() > 0) {
+                    const QubitInliningStack::ptr& copyOfLastCreatedQubitInlineStack = *optionalCopyOfLastCreatedQubitInlineStack;
+                    if (auto* lastPushedEntryOnInlineStack = copyOfLastCreatedQubitInlineStack->getStackEntryAt(lastCreatedQubitInlineStack.value()->size() - 1); lastPushedEntryOnInlineStack != nullptr) {
+                        lastPushedEntryOnInlineStack->lineNumberOfCallOfTargetModule    = statement->lineNumber;
+                        lastPushedEntryOnInlineStack->isTargetModuleAccessedViaCallStmt = true;
+                        okay                                                            = copyOfLastCreatedQubitInlineStack->push(QubitInliningStack::QubitInliningStackEntry({std::nullopt, std::nullopt, callStat->target})) && onStatement(*callStat);
+                    } else {
+                        // There must be at least one entry on the stack for the main module of the currently synthesized SyReC program
+                        okay = false;
+                    }
+                    discardLastCreateModuleCallStackInstance();
+                } else {
+                    // There must be at least one entry on the stack for the main module of the currently synthesized SyReC program
+                    okay = false;
+                }
+            }
         } else if (auto const* uncallStat = dynamic_cast<UncallStatement*>(statement.get()); uncallStat != nullptr) {
-            okay = onStatement(*uncallStat);
+            if (!shouldQubitInlineInformationBeRecorded()) {
+                okay = onStatement(*uncallStat);
+            } else {
+                const std::optional<QubitInliningStack::ptr> lastCreatedQubitInlineStack = getLastCreatedModuleCallStackInstance();
+                // The same logic applied for the CallStatement regarding the reuse of CallStack instances also applies to the handling of UncallStatements (for further details check the comment defined for the handling of the CallStatement)
+                if (const std::optional<QubitInliningStack::ptr> optionalCopyOfLastCreatedQubitInlineStack = lastCreatedQubitInlineStack.has_value() ? createInsertAndGetCopyOfLastCreatedCallStackInstance() : std::nullopt; optionalCopyOfLastCreatedQubitInlineStack.has_value() && optionalCopyOfLastCreatedQubitInlineStack->get()->size() > 0) {
+                    const QubitInliningStack::ptr& copyOfLastCreatedQubitInlineStack = *optionalCopyOfLastCreatedQubitInlineStack;
+                    if (auto* lastPushedEntryOnInlineStack = copyOfLastCreatedQubitInlineStack->getStackEntryAt(lastCreatedQubitInlineStack.value()->size() - 1); lastPushedEntryOnInlineStack != nullptr) {
+                        lastPushedEntryOnInlineStack->lineNumberOfCallOfTargetModule    = statement->lineNumber;
+                        lastPushedEntryOnInlineStack->isTargetModuleAccessedViaCallStmt = false;
+                        okay                                                            = copyOfLastCreatedQubitInlineStack->push(QubitInliningStack::QubitInliningStackEntry({std::nullopt, std::nullopt, uncallStat->target})) && onStatement(*uncallStat);
+                    } else {
+                        // There must be at least one entry on the stack for the main module of the currently synthesized SyReC program
+                        okay = false;
+                    }
+                    discardLastCreateModuleCallStackInstance();
+                } else {
+                    // There must be at least one entry on the stack for the main module of the currently synthesized SyReC program
+                    okay = false;
+                }
+            }
         } else if (auto const* skipStat = dynamic_cast<SkipStatement*>(statement.get()); skipStat != nullptr) {
             okay = onStatement(*skipStat);
         } else {
@@ -283,7 +344,7 @@ namespace syrec {
         // The ancillary qubit is only required when the original qubit of the guard expression is used as a target qubit in any of the statements of the true
         // or false branch of the IfStatement but since we cannot determine whether this case will happen (at this point of the synthesis) we are 'forced' to use the ancillary qubit.
         if (auto const* variableExpr = dynamic_cast<VariableExpression*>(statement.condition.get()); variableExpr != nullptr && synthesisOfGuardExprOk) {
-            if (const std::optional<qc::Qubit> generatedHelperLine = getConstantLine(false); generatedHelperLine.has_value()) {
+            if (const std::optional<qc::Qubit> generatedHelperLine = getConstantLine(false, getLastCreatedModuleCallStackInstance()); generatedHelperLine.has_value()) {
                 synthesisOfGuardExprOk   = annotatableQuantumComputation.addOperationsImplementingCnotGate(guardExpressionQubits.front(), *generatedHelperLine);
                 guardExpressionQubits[0] = *generatedHelperLine;
             } else {
@@ -490,7 +551,7 @@ namespace syrec {
                 break;
             }
             case BinaryExpression::BinaryOperation::LogicalAnd: { // &&
-                const std::optional<qc::Qubit> ancillaryQubitForIntermediateResult = getConstantLine(false);
+                const std::optional<qc::Qubit> ancillaryQubitForIntermediateResult = getConstantLine(false, getLastCreatedModuleCallStackInstance());
                 if (ancillaryQubitForIntermediateResult.has_value()) {
                     lines.emplace_back(*ancillaryQubitForIntermediateResult);
                     synthesisOfExprOk = conjunction(annotatableQuantumComputation, lines.front(), lhs.front(), rhs.front());
@@ -500,7 +561,7 @@ namespace syrec {
                 break;
             }
             case BinaryExpression::BinaryOperation::LogicalOr: { // ||
-                const std::optional<qc::Qubit> ancillaryQubitForIntermediateResult = getConstantLine(false);
+                const std::optional<qc::Qubit> ancillaryQubitForIntermediateResult = getConstantLine(false, getLastCreatedModuleCallStackInstance());
                 if (ancillaryQubitForIntermediateResult.has_value()) {
                     lines.emplace_back(*ancillaryQubitForIntermediateResult);
                     synthesisOfExprOk = disjunction(annotatableQuantumComputation, lines.front(), lhs.front(), rhs.front());
@@ -517,7 +578,7 @@ namespace syrec {
                 synthesisOfExprOk = getConstantLines(expression.bitwidth(), 0U, lines) && bitwiseOr(annotatableQuantumComputation, lines, lhs, rhs);
                 break;
             case BinaryExpression::BinaryOperation::LessThan: { // <
-                const std::optional<qc::Qubit> ancillaryQubitForIntermediateResult = getConstantLine(false);
+                const std::optional<qc::Qubit> ancillaryQubitForIntermediateResult = getConstantLine(false, getLastCreatedModuleCallStackInstance());
                 if (ancillaryQubitForIntermediateResult.has_value()) {
                     lines.emplace_back(*ancillaryQubitForIntermediateResult);
                     synthesisOfExprOk = lessThan(annotatableQuantumComputation, lines.front(), lhs, rhs);
@@ -528,7 +589,7 @@ namespace syrec {
                 break;
             }
             case BinaryExpression::BinaryOperation::GreaterThan: { // >
-                const std::optional<qc::Qubit> ancillaryQubitForIntermediateResult = getConstantLine(false);
+                const std::optional<qc::Qubit> ancillaryQubitForIntermediateResult = getConstantLine(false, getLastCreatedModuleCallStackInstance());
                 if (ancillaryQubitForIntermediateResult.has_value()) {
                     lines.emplace_back(*ancillaryQubitForIntermediateResult);
                     synthesisOfExprOk = greaterThan(annotatableQuantumComputation, lines.front(), lhs, rhs);
@@ -539,7 +600,7 @@ namespace syrec {
                 break;
             }
             case BinaryExpression::BinaryOperation::Equals: { // =
-                const std::optional<qc::Qubit> ancillaryQubitForIntermediateResult = getConstantLine(false);
+                const std::optional<qc::Qubit> ancillaryQubitForIntermediateResult = getConstantLine(false, getLastCreatedModuleCallStackInstance());
                 if (ancillaryQubitForIntermediateResult.has_value()) {
                     lines.emplace_back(*ancillaryQubitForIntermediateResult);
                     synthesisOfExprOk = equals(annotatableQuantumComputation, lines.front(), lhs, rhs);
@@ -550,7 +611,7 @@ namespace syrec {
                 break;
             }
             case BinaryExpression::BinaryOperation::NotEquals: { // !=
-                const std::optional<qc::Qubit> ancillaryQubitForIntermediateResult = getConstantLine(false);
+                const std::optional<qc::Qubit> ancillaryQubitForIntermediateResult = getConstantLine(false, getLastCreatedModuleCallStackInstance());
                 if (ancillaryQubitForIntermediateResult.has_value()) {
                     lines.emplace_back(*ancillaryQubitForIntermediateResult);
                     synthesisOfExprOk = notEquals(annotatableQuantumComputation, lines.front(), lhs, rhs);
@@ -561,7 +622,7 @@ namespace syrec {
                 break;
             }
             case BinaryExpression::BinaryOperation::LessEquals: { // <=
-                const std::optional<qc::Qubit> ancillaryQubitForIntermediateResult = getConstantLine(false);
+                const std::optional<qc::Qubit> ancillaryQubitForIntermediateResult = getConstantLine(false, getLastCreatedModuleCallStackInstance());
                 if (ancillaryQubitForIntermediateResult.has_value()) {
                     lines.emplace_back(*ancillaryQubitForIntermediateResult);
                     synthesisOfExprOk = lessEquals(annotatableQuantumComputation, lines.front(), lhs, rhs);
@@ -572,7 +633,7 @@ namespace syrec {
                 break;
             }
             case BinaryExpression::BinaryOperation::GreaterEquals: { // >=
-                const std::optional<qc::Qubit> ancillaryQubitForIntermediateResult = getConstantLine(false);
+                const std::optional<qc::Qubit> ancillaryQubitForIntermediateResult = getConstantLine(false, getLastCreatedModuleCallStackInstance());
                 if (ancillaryQubitForIntermediateResult.has_value()) {
                     lines.emplace_back(*ancillaryQubitForIntermediateResult);
                     synthesisOfExprOk = greaterEquals(annotatableQuantumComputation, lines.front(), lhs, rhs);
@@ -978,7 +1039,7 @@ namespace syrec {
         return true;
     }
 
-    std::optional<qc::Qubit> SyrecSynthesis::getConstantLine(bool value) {
+    std::optional<qc::Qubit> SyrecSynthesis::getConstantLine(bool value, const std::optional<QubitInliningStack::ptr>& inlinedQubitModuleCallStack) {
         qc::Qubit constLine = 0U;
 
         if (!freeConstLinesMap[value].empty()) {
@@ -991,9 +1052,14 @@ namespace syrec {
                 return std::nullopt;
             }
         } else {
-            const auto                     qubitIndex          = static_cast<qc::Qubit>(annotatableQuantumComputation.getNqubits());
-            const std::string              qubitLabel          = "q_" + std::to_string(qubitIndex) + "_const_" + std::to_string(static_cast<int>(value));
-            const std::optional<qc::Qubit> generatedQubitIndex = annotatableQuantumComputation.addPreliminaryAncillaryQubit(qubitLabel, value);
+            const auto        qubitIndex          = static_cast<qc::Qubit>(annotatableQuantumComputation.getNqubits());
+            const std::string qubitLabel          = InternalQubitLabelBuilder::buildAncillaryQubitLabel(annotatableQuantumComputation.getNqubits(), value);
+            auto              inliningInformation = AnnotatableQuantumComputation::InlinedQubitInformation();
+            if (shouldQubitInlineInformationBeRecorded()) {
+                inliningInformation.inlineStack = inlinedQubitModuleCallStack;
+            }
+
+            const std::optional<qc::Qubit> generatedQubitIndex = annotatableQuantumComputation.addPreliminaryAncillaryQubit(qubitLabel, value, inliningInformation);
             if (!generatedQubitIndex.has_value() || *generatedQubitIndex != qubitIndex) {
                 return std::nullopt;
             }
@@ -1005,9 +1071,12 @@ namespace syrec {
     bool SyrecSynthesis::getConstantLines(unsigned bitwidth, qc::Qubit value, std::vector<qc::Qubit>& lines) {
         assert(bitwidth <= 32);
 
-        bool couldQubitsForConstantLinesBeFetched = true;
+        // Ancillary qubits generated for an integer larger than 1 all share the same origin and thus will reuse the same module call stack in its inline information
+        const std::optional<QubitInliningStack::ptr> sharedAncillaryQubitModuleCallStack  = bitwidth > 0 ? getLastCreatedModuleCallStackInstance() : std::nullopt;
+        bool                                         couldQubitsForConstantLinesBeFetched = shouldQubitInlineInformationBeRecorded() ? sharedAncillaryQubitModuleCallStack.has_value() : true;
+
         for (unsigned i = 0U; i < bitwidth && couldQubitsForConstantLinesBeFetched; ++i) {
-            const std::optional<qc::Qubit> ancillaryQubitIndex = getConstantLine((value & (1 << i)) != 0);
+            const std::optional<qc::Qubit> ancillaryQubitIndex = getConstantLine((value & (1 << i)) != 0, sharedAncillaryQubitModuleCallStack);
             if (ancillaryQubitIndex.has_value()) {
                 lines.emplace_back(*ancillaryQubitIndex);
             } else {
@@ -1045,23 +1114,69 @@ namespace syrec {
         }
     }
 
-    bool SyrecSynthesis::addVariable(AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<unsigned>& dimensions, const Variable::ptr& var, const std::string& arraystr) {
+    bool SyrecSynthesis::addVariable(AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<unsigned>& dimensions, const Variable::ptr& var, const std::string& arraystr, const std::optional<QubitInliningStack::ptr>& currentModuleCallStack) {
         bool couldQubitsForVariableBeAdded = true;
+
+        const auto currNumQubits = annotatableQuantumComputation.getNqubits();
         if (dimensions.empty()) {
             for (unsigned i = 0U; i < var->bitwidth && couldQubitsForVariableBeAdded; ++i) {
-                const std::string qubitLabel     = var->name + arraystr + "." + std::to_string(i);
-                const bool        isGarbageQubit = var->type == Variable::Type::In || var->type == Variable::Type::Wire;
-                couldQubitsForVariableBeAdded &= annotatableQuantumComputation.addNonAncillaryQubit(qubitLabel, isGarbageQubit).has_value();
+                std::string                                                           internalQubitLabel     = var->name;
+                std::string                                                           userDeclaredQubitLabel = var->name;
+                const bool                                                            isGarbageQubit         = var->type == Variable::Type::In || var->type == Variable::Type::Wire;
+                std::optional<AnnotatableQuantumComputation::InlinedQubitInformation> optionalQubitInliningInformation;
+
+                if (var->type == Variable::Type::Wire || var->type == Variable::Type::State) {
+                    // To prevent name clashes when local module variables are inlined at the callsite, all local variable names are transformed to '__q<curr_num_qubits>' and an alias is created and stored
+                    // in the annotatable quantum computation. The <curr_num_qubits> portion of the new variable name is the number of qubits prior to the addition of any variable in this call so that the qubits
+                    // created for each value of a dimension of a variable share the same name prefix (i.e. the variable 'wire a[2](2)' will cause the generation of the qubits '__q0[0].0', '__q0[0].1','__q0[1].0', '__q0[1].0')
+                    internalQubitLabel = InternalQubitLabelBuilder::buildNonAncillaryQubitLabel(currNumQubits);
+                }
+                internalQubitLabel += arraystr + "." + std::to_string(i);
+                userDeclaredQubitLabel += arraystr + "." + std::to_string(i);
+
+                if (internalQubitLabel != userDeclaredQubitLabel) {
+                    optionalQubitInliningInformation                         = AnnotatableQuantumComputation::InlinedQubitInformation();
+                    optionalQubitInliningInformation->userDeclaredQubitLabel = userDeclaredQubitLabel;
+                    optionalQubitInliningInformation->inlineStack            = currentModuleCallStack;
+                }
+                couldQubitsForVariableBeAdded &= annotatableQuantumComputation.addNonAncillaryQubit(internalQubitLabel, isGarbageQubit, optionalQubitInliningInformation).has_value();
             }
         } else {
             const auto        len = static_cast<std::size_t>(dimensions.front());
             const std::vector newDimensions(dimensions.begin() + 1U, dimensions.end());
 
             for (std::size_t i = 0U; i < len && couldQubitsForVariableBeAdded; ++i) {
-                couldQubitsForVariableBeAdded &= addVariable(annotatableQuantumComputation, newDimensions, var, arraystr + "[" + std::to_string(i) + "]");
+                couldQubitsForVariableBeAdded &= addVariable(annotatableQuantumComputation, newDimensions, var, arraystr + "[" + std::to_string(i) + "]", currentModuleCallStack);
             }
         }
         return couldQubitsForVariableBeAdded;
+    }
+
+    std::optional<QubitInliningStack::ptr> SyrecSynthesis::getLastCreatedModuleCallStackInstance() const {
+        if (!shouldQubitInlineInformationBeRecorded() || moduleCallStackInstances->empty()) {
+            return std::nullopt;
+        }
+        return moduleCallStackInstances->back();
+    }
+
+    std::optional<QubitInliningStack::ptr> SyrecSynthesis::createInsertAndGetCopyOfLastCreatedCallStackInstance() {
+        if (const std::optional<QubitInliningStack::ptr> lastCreatedCallStackInstance = shouldQubitInlineInformationBeRecorded() ? getLastCreatedModuleCallStackInstance() : std::nullopt; lastCreatedCallStackInstance.has_value()) {
+            const auto newInlineStackInstance = std::make_shared<QubitInliningStack>(**lastCreatedCallStackInstance);
+            moduleCallStackInstances->emplace_back(newInlineStackInstance);
+            return moduleCallStackInstances->back();
+        }
+        return std::nullopt;
+    }
+
+    bool SyrecSynthesis::shouldQubitInlineInformationBeRecorded() const {
+        return moduleCallStackInstances.has_value();
+    }
+
+    void SyrecSynthesis::discardLastCreateModuleCallStackInstance() {
+        if (!shouldQubitInlineInformationBeRecorded() || !getLastCreatedModuleCallStackInstance().has_value()) {
+            return;
+        }
+        moduleCallStackInstances->pop_back();
     }
 
     bool SyrecSynthesis::synthesizeModuleCall(const std::variant<const CallStatement*, const UncallStatement*>& callStmtVariant) {

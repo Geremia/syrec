@@ -37,11 +37,14 @@ if(NOT TARGET ${MQT_SYREC_TARGET_NAME}-antlr-parser)
   file(GLOB_RECURSE SYREC_PARSER_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/core/syrec/parser/*.cpp)
   list(APPEND SYREC_PARSER_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/core/syrec/program.cpp)
 
+  # Instead of linking the synthesis library for the required internal qubit label builder header
+  # file the latter is simply included in the ANTLR parser library
   add_library(${MQT_SYREC_TARGET_NAME}-antlr-parser)
   target_sources(
     ${MQT_SYREC_TARGET_NAME}-antlr-parser
     PUBLIC ${SYREC_PARSER_HEADERS}
-    PRIVATE ${SYREC_PARSER_SOURCES})
+    PRIVATE ${SYREC_PARSER_SOURCES}
+            ${MQT_SYREC_INCLUDE_BUILD_DIR}/algorithms/synthesis/internal_qubit_label_builder.hpp)
 
   target_include_directories(
     ${MQT_SYREC_TARGET_NAME}-antlr-parser
@@ -90,15 +93,20 @@ if(NOT TARGET ${MQT_SYREC_TARGET_NAME}-synthesis)
   list(
     APPEND
     SYREC_SYNTHESIS_HEADERS
+    ${MQT_SYREC_INCLUDE_BUILD_DIR}/algorithms/synthesis/internal_qubit_label_builder.hpp
     ${MQT_SYREC_INCLUDE_BUILD_DIR}/core/annotatable_quantum_computation.hpp
     ${MQT_SYREC_INCLUDE_BUILD_DIR}/core/n_bit_values_container.hpp
     ${MQT_SYREC_INCLUDE_BUILD_DIR}/core/properties.hpp
+    ${MQT_SYREC_INCLUDE_BUILD_DIR}/core/qubit_inlining_stack.hpp
     ${MQT_SYREC_INCLUDE_BUILD_DIR}/core/truthTable/truth_table.hpp)
 
   file(GLOB_RECURSE SYREC_SYNTHESIS_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/algorithms/*.cpp)
-  list(APPEND SYREC_SYNTHESIS_SOURCES
-       ${CMAKE_CURRENT_SOURCE_DIR}/core/annotatable_quantum_computation.cpp
-       ${CMAKE_CURRENT_SOURCE_DIR}/core/truthTable/truth_table.cpp)
+  list(
+    APPEND
+    SYREC_SYNTHESIS_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/annotatable_quantum_computation.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/qubit_inlining_stack.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/truthTable/truth_table.cpp)
 
   add_library(${MQT_SYREC_TARGET_NAME}-synthesis)
   target_sources(

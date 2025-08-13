@@ -13,6 +13,7 @@
 #include "algorithms/synthesis/statement_execution_order_stack.hpp"
 #include "core/annotatable_quantum_computation.hpp"
 #include "core/properties.hpp"
+#include "core/qubit_inlining_stack.hpp"
 #include "core/syrec/expression.hpp"
 #include "core/syrec/module.hpp"
 #include "core/syrec/number.hpp"
@@ -33,6 +34,9 @@
 namespace syrec {
     class SyrecSynthesis {
     public:
+        inline static const std::string MAIN_MODULE_IDENTIFIER_CONFIG_KEY            = "main_module";
+        inline static const std::string GENERATE_INLINE_DEBUG_INFORMATION_CONFIG_KEY = "create_qubit_inline_debug_information";
+
         std::stack<BinaryExpression::BinaryOperation>  expOpp;
         std::stack<std::vector<unsigned>>              expLhss;
         std::stack<std::vector<unsigned>>              expRhss;
@@ -118,21 +122,26 @@ namespace syrec {
         static bool leftShift(AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<qc::Qubit>& dest, const std::vector<qc::Qubit>& toBeShiftedQubits, unsigned qubitIndexShiftAmount);  // <<
         static bool rightShift(AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<qc::Qubit>& dest, const std::vector<qc::Qubit>& toBeShiftedQubits, unsigned qubitIndexShiftAmount); // >>
 
-        [[nodiscard]] static bool addVariable(AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<unsigned>& dimensions, const Variable::ptr& var, const std::string& arraystr);
+        [[nodiscard]] static bool addVariable(AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<unsigned>& dimensions, const Variable::ptr& var, const std::string& arraystr, const std::optional<QubitInliningStack::ptr>& currentModuleCallStack);
         [[nodiscard]] bool        getVariables(const VariableAccess::ptr& var, std::vector<qc::Qubit>& lines);
 
-        [[nodiscard]] std::optional<qc::Qubit> getConstantLine(bool value);
+        [[nodiscard]] std::optional<qc::Qubit> getConstantLine(bool value, const std::optional<QubitInliningStack::ptr>& inlinedQubitModuleCallStack);
         [[nodiscard]] bool                     getConstantLines(unsigned bitwidth, unsigned value, std::vector<qc::Qubit>& lines);
 
         [[nodiscard]] static std::optional<AssignStatement::AssignOperation>  tryMapBinaryToAssignmentOperation(BinaryExpression::BinaryOperation binaryOperation) noexcept;
         [[nodiscard]] static std::optional<BinaryExpression::BinaryOperation> tryMapAssignmentToBinaryOperation(AssignStatement::AssignOperation assignOperation) noexcept;
+        [[nodiscard]] std::optional<QubitInliningStack::ptr>                  getLastCreatedModuleCallStackInstance() const;
+        [[nodiscard]] std::optional<QubitInliningStack::ptr>                  createInsertAndGetCopyOfLastCreatedCallStackInstance();
+        [[nodiscard]] bool                                                    shouldQubitInlineInformationBeRecorded() const;
+        void                                                                  discardLastCreateModuleCallStackInstance();
 
         std::stack<Statement::ptr>  stmts;
         Number::LoopVariableMapping loopMap;
         std::stack<Module::ptr>     modules;
 
-        AnnotatableQuantumComputation&                annotatableQuantumComputation; // NOLINT(cppcoreguidelines-avoid-const-or-ref-data-members)
-        std::unique_ptr<StatementExecutionOrderStack> statementExecutionOrderStack;
+        AnnotatableQuantumComputation&                      annotatableQuantumComputation; // NOLINT(cppcoreguidelines-avoid-const-or-ref-data-members)
+        std::optional<std::vector<QubitInliningStack::ptr>> moduleCallStackInstances;
+        std::unique_ptr<StatementExecutionOrderStack>       statementExecutionOrderStack;
 
     private:
         std::map<Variable::ptr, qc::Qubit>     varLines;
