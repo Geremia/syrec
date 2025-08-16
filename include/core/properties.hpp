@@ -101,6 +101,28 @@ namespace syrec {
         }
 
         /**
+         * Check whether an entry for a given key exists.
+         * @param key The key that is used in the search for a matching element.
+         * @return Whether an entry for the key exists.
+         */
+        [[maybe_unused]] bool containsKey(const key_type& key) const {
+            return map.find(key) != map.cend();
+        }
+
+        /**
+         * Remove an entry that matches a given key.
+         * @param key The key that is used in the search for a matching element.
+         * @return Whether an entry was removed.
+         */
+        [[maybe_unused]] bool remove(const key_type& key) {
+            if (auto matchingEntryForKey = map.find(key); matchingEntryForKey != map.cend()) {
+                map.erase(matchingEntryForKey);
+                return true;
+            }
+            return false;
+        }
+
+        /**
      * @brief Adds or modifies a value in the property map
      *
      * This methods sets the value located at key \p k to \p value.

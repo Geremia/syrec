@@ -14,12 +14,14 @@
 #include "algorithms/synthesis/syrec_line_aware_synthesis.hpp"
 #include "core/annotatable_quantum_computation.hpp"
 #include "core/n_bit_values_container.hpp"
+#include "core/properties.hpp"
 #include "core/syrec/program.hpp"
 
 #include <cstddef>
 #include <fstream>
 #include <gtest/gtest.h>
 #include <ios>
+#include <memory>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
@@ -55,7 +57,12 @@ public:
     syrec::AnnotatableQuantumComputation annotatableQuantumComputation;
     syrec::Program                       syrecProgramInstance;
 
-    virtual void performTestExecutionForCircuitLoadedFromJson(const std::string& pathToTestCaseDataJsonFile, const std::string& testcaseJsonKey) {
+    void performTestExecutionExpectingSynthesisFailureForCircuitLoadedFromString(const std::string_view& circuitToParseAndSynthesis, const std::optional<syrec::Properties::ptr>& optionalSynthesisSettings = std::nullopt) {
+        ASSERT_NO_FATAL_FAILURE(parseInputCircuitFromString(circuitToParseAndSynthesis, syrecProgramInstance));
+        ASSERT_FALSE(performProgramSynthesis(syrecProgramInstance, annotatableQuantumComputation, optionalSynthesisSettings)) << "Expected synthesis of input circuit to fail";
+    }
+
+    void performTestExecutionForCircuitLoadedFromJson(const std::string& pathToTestCaseDataJsonFile, const std::string& testcaseJsonKey, const std::optional<syrec::Properties::ptr>& optionalSynthesisSettings = std::nullopt) {
         json jsonDataOfTestCase;
         ASSERT_NO_FATAL_FAILURE(loadAndParseTestCaseDataFromJson(pathToTestCaseDataJsonFile, testcaseJsonKey, jsonDataOfTestCase));
         ASSERT_NO_FATAL_FAILURE(validateJsonStructure(jsonDataOfTestCase));
@@ -65,7 +72,7 @@ public:
         // https://github.com/nlohmann/json/issues/3827 or https://en.cppreference.com/w/cpp/language/dependent_name.html#template_disambiguator).
         const std::string& stringifiedInputCircuit = jsonDataOfTestCase[jsonKeyForInputCircuit].template get<std::string>();
         ASSERT_NO_FATAL_FAILURE(parseInputCircuitFromString(stringifiedInputCircuit, syrecProgramInstance));
-        ASSERT_TRUE(performProgramSynthesis(syrecProgramInstance, annotatableQuantumComputation)) << "Synthesis of input circuit was not successful";
+        ASSERT_TRUE(performProgramSynthesis(syrecProgramInstance, annotatableQuantumComputation, optionalSynthesisSettings)) << "Synthesis of input circuit was not successful";
 
         const json& jsonDataOfSimulationRuns = jsonDataOfTestCase[jsonKeyForSimulationRuns];
         for (const auto& jsonDataOfSimulationRun: jsonDataOfSimulationRuns) {
@@ -116,11 +123,12 @@ protected:
         }
     }
 
-    [[nodiscard]] static bool performProgramSynthesis(const syrec::Program& program, syrec::AnnotatableQuantumComputation& annotatableQuantumComputation) {
+    [[nodiscard]] static bool performProgramSynthesis(const syrec::Program& program, syrec::AnnotatableQuantumComputation& annotatableQuantumComputation, const std::optional<syrec::Properties::ptr>& optionalSynthesisSettings = std::nullopt) {
+        const auto synthesisSettings = optionalSynthesisSettings.value_or(std::make_shared<syrec::Properties>());
         if constexpr (std::is_same_v<T, syrec::CostAwareSynthesis>) {
-            return syrec::CostAwareSynthesis::synthesize(annotatableQuantumComputation, program);
+            return syrec::CostAwareSynthesis::synthesize(annotatableQuantumComputation, program, synthesisSettings);
         } else {
-            return syrec::LineAwareSynthesis::synthesize(annotatableQuantumComputation, program);
+            return syrec::LineAwareSynthesis::synthesize(annotatableQuantumComputation, program, synthesisSettings);
         }
     }
 
