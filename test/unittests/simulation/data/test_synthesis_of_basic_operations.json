@@ -127,15 +127,6 @@
       }
     ]
   },
-  "UserDefinedMainModuleIdentifierInSynthesisSettingsAllowedToMatchOverloadedModuleIdentifierWithLastDefinedModuleSelectedAsMainModule": {
-    "inputCircuit": "module incr(inout a(1)) ++= a module incr(inout a(2)) ++= a.1 module incr(inout a(3)) ++= a.2",
-    "simulationRuns": [
-      {
-        "in": "000",
-        "out": "001"
-      }
-    ]
-  },
   "UserDefinedModuleIdentifierInSynthesisSettingsOnlyMatchingModulesWithSameIdentifierCharacterCasing": {
     "inputCircuit": "module incr(inout a(1)) ++= a module INCR(inout a(2)) ++= a.1 module incr(inout a(3)) ++= a.2",
     "simulationRuns": [

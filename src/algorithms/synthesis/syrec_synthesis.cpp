@@ -44,8 +44,8 @@ namespace {
      */
     using TimeStamp = std::chrono::time_point<std::chrono::steady_clock>;
 
-    [[nodiscard]] bool isMoreThanOneModuleNamedMainDeclared(const syrec::Module::vec& modulesToCheck) {
-        return std::count_if(modulesToCheck.cbegin(), modulesToCheck.cend(), [](const syrec::Module::ptr& moduleToCheck) { return moduleToCheck->name == "main"; }) > 1;
+    [[nodiscard]] bool isMoreThanOneModuleMatchingIdentifierDeclared(const syrec::Module::vec& modulesToCheck, const std::string_view& moduleIdentifierToFind) {
+        return std::count_if(modulesToCheck.cbegin(), modulesToCheck.cend(), [moduleIdentifierToFind](const syrec::Module::ptr& moduleToCheck) { return moduleToCheck->name == moduleIdentifierToFind; }) > 1;
     }
 } // namespace
 
@@ -122,8 +122,8 @@ namespace syrec {
         // get the main module
         Module::ptr main;
         if (expectedMainModuleIdentifier.has_value()) {
-            if (expectedMainModuleIdentifier.value() == defaultMainModuleIdentifier && isMoreThanOneModuleNamedMainDeclared(programModules)) {
-                std::cerr << "There can be at most one module named 'main'\n";
+            if (isMoreThanOneModuleMatchingIdentifierDeclared(programModules, *expectedMainModuleIdentifier)) {
+                std::cerr << "There can be at most one module named '" << *expectedMainModuleIdentifier << "' that shall be used as the entry point of the SyReC program\n";
                 return false;
             }
             const auto& lastModuleMatchingIdentifier = std::find_if(programModules.crbegin(), programModules.crend(), [&expectedMainModuleIdentifier](const Module::ptr& programModule) { return programModule->name == *expectedMainModuleIdentifier; });
@@ -135,7 +135,7 @@ namespace syrec {
         } else {
             main = program.findModule(defaultMainModuleIdentifier);
             if (main != nullptr) {
-                if (isMoreThanOneModuleNamedMainDeclared(programModules)) {
+                if (isMoreThanOneModuleMatchingIdentifierDeclared(programModules, defaultMainModuleIdentifier)) {
                     std::cerr << "There can be at most one module named 'main'\n";
                     return false;
                 }

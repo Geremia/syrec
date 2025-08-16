@@ -59,14 +59,16 @@ std::optional<std::shared_ptr<syrec::Program>> CustomModuleVisitor::visitProgram
     std::shared_ptr<const syrec::Module> definedMainModule = nullptr;
 
     if (parserConfiguration.optionalProgramEntryPointModuleIdentifier.has_value()) {
+        const auto userDefinedMainModuleIdentifierSemanticErrorPosition = Message::Position(0, 0);
+
         const std::string userDefinedProgramEntryPointModuleIdentifier = parserConfiguration.optionalProgramEntryPointModuleIdentifier.value();
         const std::regex  mainModuleIdentifierValidationRegex("^(_|[a-zA-Z])+\\w*");
         if (!std::regex_match(userDefinedProgramEntryPointModuleIdentifier, mainModuleIdentifierValidationRegex)) {
-            recordSemanticError<SemanticError::InvalidUserDefinedProgramEntryPointModuleIdentifier>(Message::Position(0, 0), userDefinedProgramEntryPointModuleIdentifier);
+            recordSemanticError<SemanticError::InvalidUserDefinedProgramEntryPointModuleIdentifier>(userDefinedMainModuleIdentifierSemanticErrorPosition, userDefinedProgramEntryPointModuleIdentifier);
         } else {
             const syrec::Module::vec modulesMatchingIdentifier = symbolTable->getModulesByName(userDefinedProgramEntryPointModuleIdentifier);
             if (modulesMatchingIdentifier.empty()) {
-                recordSemanticError<SemanticError::NoModuleMatchingUserDefinedProgramEntryPoint>(Message::Position(0, 0), userDefinedProgramEntryPointModuleIdentifier);
+                recordSemanticError<SemanticError::NoModuleMatchingUserDefinedProgramEntryPoint>(userDefinedMainModuleIdentifierSemanticErrorPosition, userDefinedProgramEntryPointModuleIdentifier);
             } else {
                 definedMainModule = modulesMatchingIdentifier.back();
             }

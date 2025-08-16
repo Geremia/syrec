@@ -93,11 +93,12 @@ TYPED_TEST_P(BaseSimulationTestFixture, UserDefinedMainModuleIdentifierInSynthes
     this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest(), synthesisSettings);
 }
 
-TYPED_TEST_P(BaseSimulationTestFixture, UserDefinedMainModuleIdentifierInSynthesisSettingsAllowedToMatchOverloadedModuleIdentifierWithLastDefinedModuleSelectedAsMainModule) {
+TYPED_TEST_P(BaseSimulationTestFixture, UserDefinedMainModuleIdentifierInSynthesisSettingsMatchingMultipleModulesCausesError) {
     auto synthesisSettings = std::make_shared<syrec::Properties>();
     synthesisSettings->set<std::string>(syrec::SyrecSynthesis::MAIN_MODULE_IDENTIFIER_CONFIG_KEY, "incr");
 
-    this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest(), synthesisSettings);
+    constexpr std::string_view stringifiedCircuitToParseAndSynthesis = "module incr(inout a(1)) ++= a module incr(inout a(2)) ++= a.1 module incr(inout a(3)) ++= a.2";
+    this->performTestExecutionExpectingSynthesisFailureForCircuitLoadedFromString(stringifiedCircuitToParseAndSynthesis, synthesisSettings);
 }
 
 TYPED_TEST_P(BaseSimulationTestFixture, UserDefinedModuleIdentifierInSynthesisSettingsOnlyMatchingModulesWithSameIdentifierCharacterCasing) {
@@ -629,7 +630,7 @@ REGISTER_TYPED_TEST_SUITE_P(BaseSimulationTestFixture,
                             UserDefinedMainModuleIdentifierInSynthesisSettingsBeingEmptyCausesError,
                             UserDefinedMainModuleIdentifierInSynthesisSettingsOnlyPartiallyMatchingModuleWithNoFullMatchFoundCausesError,
                             UserDefinedMainModuleIdentifierInSynthesisSettingsOnlyPartiallyMatchingModuleWithFullMatchFoundSelectsLatterAsModuleModule,
-                            UserDefinedMainModuleIdentifierInSynthesisSettingsAllowedToMatchOverloadedModuleIdentifierWithLastDefinedModuleSelectedAsMainModule,
+                            UserDefinedMainModuleIdentifierInSynthesisSettingsMatchingMultipleModulesCausesError,
                             UserDefinedModuleIdentifierInSynthesisSettingsOnlyMatchingModulesWithSameIdentifierCharacterCasing,
                             // END of tests of synthesis settings features
 
