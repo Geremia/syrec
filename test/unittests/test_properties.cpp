@@ -373,10 +373,10 @@ TEST(PropertiesTest, UpdateValueOfExistingEntryWithValueOfAssignableTypePossible
 }
 
 TEST(PropertiesTest, GetValueOfEntryInInvalidLookupMapUsingLookupFunctionAcceptingSmartPointer) {
-    Properties::ptr        invalidLookupMap     = nullptr;
+    const Properties::ptr  invalidLookupMap     = nullptr;
     constexpr unsigned int expectedDefaultValue = 2U;
 
-    unsigned int actualFetchedValue;
+    unsigned int actualFetchedValue = 0U;
     ASSERT_NO_FATAL_FAILURE(actualFetchedValue = get<unsigned int>(invalidLookupMap, "key_one", expectedDefaultValue));
     ASSERT_EQ(expectedDefaultValue, actualFetchedValue);
 }

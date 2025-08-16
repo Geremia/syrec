@@ -56,7 +56,7 @@ namespace syrec {
          * @param key The key that is used in the search for a matching element.
          * @return Whether an entry for the key exists.
          */
-        [[maybe_unused]] bool containsKey(const std::string& key) const {
+        [[nodiscard]] bool containsKey(const std::string& key) const {
             return map.find(key) != map.cend();
         }
 
