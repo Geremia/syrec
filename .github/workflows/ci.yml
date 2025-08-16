@@ -27,7 +27,7 @@ jobs:
     name: 🐧 Release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       - name: Install boost
@@ -52,7 +52,7 @@ jobs:
     name: 🍎 Release
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       - name: Install boost
@@ -75,7 +75,7 @@ jobs:
     name: 🏁 Release
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       - uses: ilammy/msvc-dev-cmd@v1
@@ -110,7 +110,7 @@ jobs:
     name: 📈 Coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       - name: Install boost
