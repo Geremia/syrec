@@ -166,12 +166,13 @@ TEST(PropertiesTest, RemoveNotExistingEntry) {
     ASSERT_TRUE(propertiesLookup.containsKey(keyTwo));
     ASSERT_TRUE(propertiesLookup.containsKey(keyThree));
 
-    ASSERT_FALSE(propertiesLookup.remove("key_four"));
+    const std::string& notExistingKey = "key_four";
+    ASSERT_FALSE(propertiesLookup.remove(notExistingKey));
 
     ASSERT_TRUE(propertiesLookup.containsKey(keyOne));
     ASSERT_TRUE(propertiesLookup.containsKey(keyTwo));
     ASSERT_TRUE(propertiesLookup.containsKey(keyThree));
-    ASSERT_TRUE(propertiesLookup.containsKey("key_four"));
+    ASSERT_FALSE(propertiesLookup.containsKey(notExistingKey));
 
     ASSERT_NO_FATAL_FAILURE(assertValueForKeyMatches<std::string>(propertiesLookup, keyOne, expectedKeyOneValue));
     ASSERT_NO_FATAL_FAILURE(assertValueForKeyMatches<unsigned int>(propertiesLookup, keyTwo, expectedKeyTwoValue));
