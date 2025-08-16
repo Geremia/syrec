@@ -969,7 +969,7 @@ class SynthesisSettingsUpdater(QtWidgets.QDialog):  # type: ignore[misc]
         self.expected_main_module_identifier_textbox.setPlaceholderText(
             "Leave blank if last declared module of SyReC program should be used as main module..."
         )
-        module_identifier_regular_expr = QtCore.QRegularExpression(R"(^$|^\w+\w*$)")
+        module_identifier_regular_expr = QtCore.QRegularExpression(R"(^($|^(_|[a-zA-Z])+\w*))")
         module_identifier_validator = QtGui.QRegularExpressionValidator(module_identifier_regular_expr, self)
         self.expected_main_module_identifier_textbox.setValidator(module_identifier_validator)
 
@@ -1007,11 +1007,13 @@ class SynthesisSettingsUpdater(QtWidgets.QDialog):  # type: ignore[misc]
     def save_settings(self) -> QtWidgets.QDialog.DialogCode:
         if self.synthesis_settings is not None:
             if self.expected_main_module_identifier_textbox.hasAcceptableInput():
-                self.synthesis_settings.set_string(
-                    syrec.SYNTHESIS_CONFIG_KEY_MAIN_MODULE_IDENTIFIER,
-                    self.expected_main_module_identifier_textbox.text(),
-                )
-
+                user_defined_main_module_identifier: str = self.expected_main_module_identifier_textbox.text()
+                if not user_defined_main_module_identifier:
+                    self.synthesis_settings.remove(syrec.SYNTHESIS_CONFIG_KEY_MAIN_MODULE_IDENTIFIER)
+                else:
+                    self.synthesis_settings.set_string(
+                        syrec.SYNTHESIS_CONFIG_KEY_MAIN_MODULE_IDENTIFIER, user_defined_main_module_identifier
+                    )
             self.synthesis_settings.set_bool(
                 syrec.SYNTHESIS_CONFIG_KEY_GENERATE_INLINE_DEBUG_INFORMATION,
                 self.generate_inlined_qubit_debug_information_checkbox.isChecked(),
