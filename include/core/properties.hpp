@@ -13,6 +13,7 @@
 #include <any>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace syrec {
@@ -27,11 +28,14 @@ namespace syrec {
          * Fetch the value of the entry matching the given key.
          * @tparam T The expected type of the value of the entry in the map that must match exactly (i.e. not allowed be a derived type or assignable type of \p T).
          * @param key The key that is used in the search for a matching element.
-         * @return The value of the entry matching the given key.
+         * @return The value of the entry matching the given key casted to the template parameter \p T, otherwise std::nullopt.
          */
         template<typename T>
-        T get(const std::string& key) const {
-            return std::any_cast<T>(map.find(key)->second);
+        [[maybe_unused]] std::optional<T> get(const std::string& key) const {
+            if (auto matchingEntryForKey = map.find(key); matchingEntryForKey != map.cend()) {
+                return std::any_cast<T>(matchingEntryForKey->second);
+            }
+            return std::nullopt;
         }
 
         /**
@@ -43,11 +47,8 @@ namespace syrec {
          * @remarks No new entry in the internal lookup is created in case that no entry for the given key existed.
          */
         template<typename T>
-        T get(const std::string& key, const T& defaultValue) const {
-            if (map.find(key) == map.end()) {
-                return defaultValue;
-            }
-            return std::any_cast<T>(map.find(key)->second);
+        [[maybe_unused]] T get(const std::string& key, const T& defaultValue) const {
+            return get<T>(key).value_or(defaultValue);
         }
 
         /**
@@ -96,7 +97,7 @@ namespace syrec {
      * @return The value of the entry matching \p key if \p settings is a non-null properties object and a matching entry for \p key existed, otherwise \p defaultValue.
      */
     template<typename T>
-    T get(const Properties::ptr& settings, const std::string& key, const T& defaultValue) {
+    [[maybe_unused]] T get(const Properties::ptr& settings, const std::string& key, const T& defaultValue) {
         return settings != nullptr ? settings->get<T>(key, defaultValue) : defaultValue;
     }
 } // namespace syrec
