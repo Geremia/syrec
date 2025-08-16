@@ -20,7 +20,7 @@ jobs:
       clang-version: 19
     steps:
       # check out the repository (including submodules)
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       # As long as the boost dependency exists, the reusable workflow from:
