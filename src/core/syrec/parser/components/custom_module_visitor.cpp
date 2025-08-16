@@ -27,6 +27,7 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <regex>
 #include <string>
 #include <variant>
 #include <vector>
@@ -56,12 +57,19 @@ std::optional<std::shared_ptr<syrec::Program>> CustomModuleVisitor::visitProgram
 
     std::string                          programEntryPointModuleIdentifier;
     std::shared_ptr<const syrec::Module> definedMainModule = nullptr;
-    if (const std::string& userDefinedProgramEntryPointModuleIdentifier = parserConfiguration.optionalProgramEntryPointModuleIdentifier.value_or(""); !userDefinedProgramEntryPointModuleIdentifier.empty()) {
-        const syrec::Module::vec modulesMatchingIdentifier = symbolTable->getModulesByName(userDefinedProgramEntryPointModuleIdentifier);
-        if (modulesMatchingIdentifier.empty()) {
-            recordSemanticError<SemanticError::NoModuleMatchingUserDefinedProgramEntryPoint>(Message::Position(0, 0), userDefinedProgramEntryPointModuleIdentifier);
+
+    if (parserConfiguration.optionalProgramEntryPointModuleIdentifier.has_value()) {
+        const std::string userDefinedProgramEntryPointModuleIdentifier = parserConfiguration.optionalProgramEntryPointModuleIdentifier.value();
+        const std::regex  mainModuleIdentifierValidationRegex("^(_|[a-zA-Z])+\\w*");
+        if (!std::regex_match(userDefinedProgramEntryPointModuleIdentifier, mainModuleIdentifierValidationRegex)) {
+            recordSemanticError<SemanticError::InvalidUserDefinedProgramEntryPointModuleIdentifier>(Message::Position(0, 0), userDefinedProgramEntryPointModuleIdentifier);
         } else {
-            definedMainModule = modulesMatchingIdentifier.front();
+            const syrec::Module::vec modulesMatchingIdentifier = symbolTable->getModulesByName(userDefinedProgramEntryPointModuleIdentifier);
+            if (modulesMatchingIdentifier.empty()) {
+                recordSemanticError<SemanticError::NoModuleMatchingUserDefinedProgramEntryPoint>(Message::Position(0, 0), userDefinedProgramEntryPointModuleIdentifier);
+            } else {
+                definedMainModule = modulesMatchingIdentifier.back();
+            }
         }
     } else {
         if (const syrec::Module::vec modulesMatchingIdentifier = symbolTable->getModulesByName("main"); !modulesMatchingIdentifier.empty()) {
