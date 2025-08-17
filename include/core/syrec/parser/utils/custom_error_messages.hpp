@@ -41,7 +41,8 @@ namespace syrec_parser {
         VariableBitwidthEqualToZero,
         NumberOfValuesOfDimensionEqualToZero,
         NoModuleMatchingUserDefinedProgramEntryPoint,
-        ReservedIdentifierPrefixUsed
+        ReservedIdentifierPrefixUsed,
+        InvalidUserDefinedProgramEntryPointModuleIdentifier
     };
 
     /// Get the identifier associated with a given semantic error
@@ -105,6 +106,8 @@ namespace syrec_parser {
                 return "SEM27";
             case SemanticError::ReservedIdentifierPrefixUsed:
                 return "SEM28";
+            case SemanticError::InvalidUserDefinedProgramEntryPointModuleIdentifier:
+                return "SEM29";
             default:
                 return "";
         }
@@ -172,6 +175,8 @@ namespace syrec_parser {
                 return "No module matching the user defined SyReC programs entry point identifier '{:s}'";
             case SemanticError::ReservedIdentifierPrefixUsed:
                 return "Identifier '{:s}' cannot start with '{:s}' since this prefix is reserved for internal use";
+            case SemanticError::InvalidUserDefinedProgramEntryPointModuleIdentifier:
+                return "User defined program entry point defined as module identifier '{:s}' was not valid!";
             default:
                 return "";
         }

@@ -30,6 +30,7 @@
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <regex>
 #include <stack>
 #include <string>
 #include <string_view>
@@ -42,6 +43,10 @@ namespace {
      * Prefer the usage of std::chrono::steady_clock instead of std::chrono::system_clock since the former cannot decrease (due to time zone changes, etc.) and is most suitable for measuring intervals according to (https://en.cppreference.com/w/cpp/chrono/steady_clock)
      */
     using TimeStamp = std::chrono::time_point<std::chrono::steady_clock>;
+
+    [[nodiscard]] bool isMoreThanOneModuleMatchingIdentifierDeclared(const syrec::Module::vec& modulesToCheck, const std::string_view& moduleIdentifierToFind) {
+        return std::count_if(modulesToCheck.cbegin(), modulesToCheck.cend(), [moduleIdentifierToFind](const syrec::Module::ptr& moduleToCheck) { return moduleToCheck->name == moduleIdentifierToFind; }) > 1;
+    }
 } // namespace
 
 namespace syrec {
@@ -83,26 +88,62 @@ namespace syrec {
             return false;
         }
 
-        // Settings parsing
-        const auto& expectedMainModuleIdentifier = settings != nullptr ? settings->get<std::string>(MAIN_MODULE_IDENTIFIER_CONFIG_KEY, "") : "";
+        const Module::vec& programModules = program.modules();
+        if (programModules.empty()) {
+            std::cerr << "A SyReC program must consist of at least one module\n";
+            return false;
+        }
+
+        // Validation of optional defined main module identifier of synthesis settings
+        const std::string&         defaultMainModuleIdentifier = "main";
+        std::optional<std::string> expectedMainModuleIdentifier;
+        if (settings != nullptr && settings->get<std::string>(MAIN_MODULE_IDENTIFIER_CONFIG_KEY).has_value()) {
+            expectedMainModuleIdentifier = settings->get<std::string>(MAIN_MODULE_IDENTIFIER_CONFIG_KEY);
+            if (expectedMainModuleIdentifier.value().empty()) {
+                std::cerr << "Expected main module identifier defined in synthesis settings must have a value\n";
+                return false;
+            }
+            const std::regex expectedMainModuleIdentifierValidationRegex("^(_|[a-zA-Z])+\\w*");
+            if (!std::regex_match(*expectedMainModuleIdentifier, expectedMainModuleIdentifierValidationRegex)) {
+                std::cerr << "Expected main module identifier defined in synthesis settings '" << *expectedMainModuleIdentifier << "' did not defined a valid identifier according to the SyReC grammar, check your inputs!\n";
+                return false;
+            }
+        } else {
+            if (program.findModule(defaultMainModuleIdentifier) != nullptr) {
+                expectedMainModuleIdentifier = defaultMainModuleIdentifier;
+            } else {
+                expectedMainModuleIdentifier = program.modules().back()->name;
+            }
+        }
+
         // Run-time measuring
         const TimeStamp simulationStartTime = std::chrono::steady_clock::now();
 
         // get the main module
         Module::ptr main;
-
-        if (!expectedMainModuleIdentifier.empty()) {
-            main = program.findModule(expectedMainModuleIdentifier);
-            if (!main) {
-                std::cerr << "Program has no module: " << expectedMainModuleIdentifier << "\n";
+        if (expectedMainModuleIdentifier.has_value()) {
+            if (isMoreThanOneModuleMatchingIdentifierDeclared(programModules, *expectedMainModuleIdentifier)) {
+                std::cerr << "There can be at most one module named '" << *expectedMainModuleIdentifier << "' that shall be used as the entry point of the SyReC program\n";
                 return false;
             }
+            const auto& lastModuleMatchingIdentifier = std::find_if(programModules.crbegin(), programModules.crend(), [&expectedMainModuleIdentifier](const Module::ptr& programModule) { return programModule->name == *expectedMainModuleIdentifier; });
+            if (lastModuleMatchingIdentifier == programModules.crend()) {
+                std::cerr << "If the expected main module identifier is defined using the synthesis settings ('" << *expectedMainModuleIdentifier << "') then there must be at least one module matching the defined identifier\n";
+                return false;
+            }
+            main = *lastModuleMatchingIdentifier;
         } else {
-            main = program.findModule("main");
-            if (!main) {
-                main = program.modules().front();
+            main = program.findModule(defaultMainModuleIdentifier);
+            if (main != nullptr) {
+                if (isMoreThanOneModuleMatchingIdentifierDeclared(programModules, defaultMainModuleIdentifier)) {
+                    std::cerr << "There can be at most one module named 'main'\n";
+                    return false;
+                }
+            } else {
+                main = programModules.back();
             }
         }
+        assert(main != nullptr);
 
         // declare as top module
         synthesizer->setMainModule(main);
@@ -119,11 +160,11 @@ namespace syrec {
 
         // create lines for global variables
         if (!synthesizer->addVariables(main->parameters)) {
-            std::cerr << "Failed to create qubits for parameters of main module of SyReC program";
+            std::cerr << "Failed to create qubits for parameters of main module of SyReC program\n";
             return false;
         }
         if (!synthesizer->addVariables(main->variables)) {
-            std::cerr << "Failed to create qubits for local variables of main module of SyReC program";
+            std::cerr << "Failed to create qubits for local variables of main module of SyReC program\n";
             return false;
         }
 
@@ -131,7 +172,7 @@ namespace syrec {
         const auto synthesisOfMainModuleOk = synthesizer->onModule(main);
         for (const auto& ancillaryQubit: synthesizer->annotatableQuantumComputation.getAddedPreliminaryAncillaryQubitIndices()) {
             if (!synthesizer->annotatableQuantumComputation.promotePreliminaryAncillaryQubitToDefinitiveAncillary(ancillaryQubit)) {
-                std::cerr << "Failed to mark qubit" << std::to_string(ancillaryQubit) << " as ancillary qubit";
+                std::cerr << "Failed to mark qubit" << std::to_string(ancillaryQubit) << " as ancillary qubit\n";
                 return false;
             }
         }
@@ -1194,7 +1235,7 @@ namespace syrec {
             const std::string_view&             parameterIdentifier                        = moduleParameters.at(i);
             const std::optional<Variable::ptr>& matchingParameterOrVariableOfCurrentModule = modules.top()->findParameterOrVariable(parameterIdentifier);
             if (!matchingParameterOrVariableOfCurrentModule.has_value() || matchingParameterOrVariableOfCurrentModule.value() == nullptr) {
-                std::cerr << "Failed to find matching parameter or variable of module " << modules.top()->name << " for parameter '" << parameterIdentifier << "' when setting references of parameters of " << (callStmt != nullptr ? "called" : "uncalled") << " module " << targetModule->name;
+                std::cerr << "Failed to find matching parameter or variable of module " << modules.top()->name << " for parameter '" << parameterIdentifier << "' when setting references of parameters of " << (callStmt != nullptr ? "called" : "uncalled") << " module " << targetModule->name << "\n";
                 return false;
             }
             const auto& moduleParameter = targetModule->parameters.at(i);
@@ -1242,9 +1283,9 @@ namespace syrec {
                 } else {
                     const auto offsetFromLastStmtToCurrentlyProcessedOneInUncalledModule = static_cast<std::size_t>(std::distance(statements.rend(), it));
                     if (callStmt != nullptr) {
-                        std::cerr << "Failed to create inverse of statement at index " << std::to_string(statements.size() - offsetFromLastStmtToCurrentlyProcessedOneInUncalledModule) << " in body of called module " << targetModule->name << "(CALL @ " << std::to_string(it->get()->lineNumber) << ")";
+                        std::cerr << "Failed to create inverse of statement at index " << std::to_string(statements.size() - offsetFromLastStmtToCurrentlyProcessedOneInUncalledModule) << " in body of called module " << targetModule->name << "(CALL @ " << std::to_string(it->get()->lineNumber) << ")\n";
                     } else {
-                        std::cerr << "Failed to create inverse of statement at index " << std::to_string(statements.size() - offsetFromLastStmtToCurrentlyProcessedOneInUncalledModule) << " in body of uncalled module " << targetModule->name << "(UNCALL @ " << std::to_string(it->get()->lineNumber) << ")";
+                        std::cerr << "Failed to create inverse of statement at index " << std::to_string(statements.size() - offsetFromLastStmtToCurrentlyProcessedOneInUncalledModule) << " in body of uncalled module " << targetModule->name << "(UNCALL @ " << std::to_string(it->get()->lineNumber) << ")\n";
                     }
                     synthesisOfModuleBodyOk = false;
                 }

@@ -11,142 +11,93 @@
 #pragma once
 
 #include <any>
-#include <iostream>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace syrec {
 
     /**
-   * @brief Property Map for storing settings and statistical information
-   *
-   * In this data structure settings and statistical data can be stored.
-   * The key to access data is always of type \p std::string and the value
-   * can be of any type. To be type-safe, the getter corresponding get
-   * functions have to be provided with a type.
-   */
+    * Property map for storing settings and statistical information
+    */
     struct Properties {
-        /**
-     * @brief Internal storage type used with the internal property map
-     */
-        using storage_type = std::map<std::string, std::any>;
-
-        /**
-     * @brief Value type of the property map, i.e. \p std::string
-     */
-        using value_type = storage_type::mapped_type;
-
-        /**
-     *
-     * There are pre-defined getter methods, which can be called with a
-     * type identifier for explicit casting.
-     */
-        using key_type = storage_type::key_type;
-
-        /**
-     * @brief Smart Pointer version of this class
-     *
-     * Inside the framework, always the Smart Pointer version is used.
-     * To have an easy access, there are special functions provided
-     * which take the smart pointer as parameter and check as well
-     * if it can be dereferenced.
-     *
-     * @sa get
-     * @sa set_error_message
-     */
         using ptr = std::shared_ptr<Properties>;
 
         /**
-     * @brief Standard constructor
-     *
-     * Creates the property map on base of the storage map
-     */
-        Properties() = default;
-
-        /**
-     * @brief Casted access to an existing element
-     *
-     * With \p T you can specify the type of the element. Note, that
-     * it has to be the original used type, e.g. there is a difference
-     * even between \p int and \p unsigned.
-     *
-     * The type is determined automatically using the set method.
-     *
-     * @param k Key to access the property map. Must exist.
-     * @return The value associated with key \p k casted to its original type \p T.
-     */
+         * Fetch the value of the entry matching the given key.
+         * @tparam T The expected type of the value of the entry in the map that must match exactly (i.e. not allowed be a derived type or assignable type of \p T).
+         * @param key The key that is used in the search for a matching element.
+         * @return The value of the entry matching the given key casted to the template parameter \p T, otherwise std::nullopt.
+         */
         template<typename T>
-        T get(const std::string& k) const {
-            return std::any_cast<T>(map.find(k)->second);
-        }
-
-        /**
-     * @brief Casted access to an existing element with fall-back option
-     *
-     * The same as get(const key_type& k), but if \p k does not exist,
-     * a default value is returned, which has to be of type \p T.
-     *
-     * @param k Key to access the property map. May not exist.
-     * @param default_value If \p k does not exist, this value is returned.
-     * @return The value associated with key \p k casted to its original type \p T. If the key \p k does not exist,
-     *         \p default_value is returned.
-     */
-        template<typename T>
-        T get(const key_type& k, const T& defaultValue) const {
-            if (map.find(k) == map.end()) {
-                return defaultValue;
+        [[maybe_unused]] std::optional<T> get(const std::string& key) const {
+            if (auto matchingEntryForKey = map.find(key); matchingEntryForKey != map.cend()) {
+                return std::any_cast<T>(matchingEntryForKey->second);
             }
-            return std::any_cast<T>(map.find(k)->second);
+            return std::nullopt;
         }
 
         /**
-     * @brief Adds or modifies a value in the property map
-     *
-     * This methods sets the value located at key \p k to \p value.
-     * If the key does not exist, it will be created.
-     * Be careful which type was used, especially with typed constants:
-     * @code
-     * properties p;
-     * p.set( "a unsigned number", 5u );
-     * p.get<unsigned>( "a unsigned number" ); // OK!
-     * p.get<int>( "a unsigned number" );      // FAIL!
-     *
-     * p.set( "a signed number", 5 );
-     * p.get<unsigned>( "a signed number" );   // FAIL!
-     * p.get<int>( "a signed number" );        // OK!
-     * @endcode
-     *
-     * @param k Key of the property
-     * @param value The new value of \p k. If \p k already existed, the type of \p value must not change.
-     */
+         * Fetch the value of the entry matching the given key or return a default value.
+         * @tparam T The expected type of the value of the entry in the map that must match exactly (i.e. not allowed be a derived type or assignable type of \p T).
+         * @param key The key that is used in the search for a matching element.
+         * @param defaultValue The default value to return if no entry for the given key exists.
+         * @return The value of the entry matching the given key, otherwise \p defaultValue.
+         * @remarks No new entry in the internal lookup is created in case that no entry for the given key existed.
+         */
         template<typename T>
-        void set(const std::string& k, const T& value) {
-            map[k] = value;
+        [[maybe_unused]] T get(const std::string& key, const T& defaultValue) const {
+            return get<T>(key).value_or(defaultValue);
+        }
+
+        /**
+         * Check whether an entry for a given key exists.
+         * @param key The key that is used in the search for a matching element.
+         * @return Whether an entry for the key exists.
+         */
+        [[nodiscard]] bool containsKey(const std::string& key) const {
+            return map.find(key) != map.cend();
+        }
+
+        /**
+         * Remove an entry that matches a given key.
+         * @param key The key that is used in the search for a matching element.
+         * @return Whether an entry was removed.
+         */
+        [[maybe_unused]] bool remove(const std::string& key) {
+            if (auto matchingEntryForKey = map.find(key); matchingEntryForKey != map.cend()) {
+                map.erase(matchingEntryForKey);
+                return true;
+            }
+            return false;
+        }
+
+        /**
+         * Add or update the value of an entry in the internal lookup
+         * @tparam T The expected type of the value of the entry in the internal lookup. The same type must be used in all overloads of the get(...) function when attempting to query the value of said entry.
+         * @param key The key with which the entry is identified in the internal lookup.
+         * @param value The value of the entry.
+         */
+        template<typename T>
+        void set(const std::string& key, const T& value) {
+            map[key] = value;
         }
 
     private:
-        storage_type map;
+        std::map<std::string, std::any> map;
     };
 
     /**
-   * @brief A helper method to access the get method on a properties smart pointer
-   *
-   * This method has basically two fall backs. If settings does not point to anything,
-   * it returns \p default_value, and otherwise it calls the get method on the
-   * pointee of the smart pointer with the \p default_value again, so in case the key \p k
-   * does not exists, the \p default_value is returned as well.
-   *
-   * @param settings A smart pointer to a properties instance or an empty smart pointer
-   * @param k Key of the property to be accessed
-   * @param default_value A default_value as fall back option in case the smart pointer
-   *                      is empty or the key does not exist.
-   *
-   * @return The value addressed by \p k or the \p default_value.
-   */
+     * Fetch the value of an entry in a properties object or return a default value if no such value exists.
+     * @tparam T The expected type of the value of the entry in the map that must match exactly (i.e. not allowed be a derived type or assignable type of \p T).
+     * @param settings The properties object that shall be queried.
+     * @param key The key that is used in the search for a matching element.
+     * @param defaultValue The default value to return in case no matching entry was found.
+     * @return The value of the entry matching \p key if \p settings is a non-null properties object and a matching entry for \p key existed, otherwise \p defaultValue.
+     */
     template<typename T>
-    T get(const Properties::ptr& settings, const Properties::key_type& k, const T& defaultValue) {
-        return settings ? settings->get<T>(k, defaultValue) : defaultValue;
+    [[maybe_unused]] T get(const Properties::ptr& settings, const std::string& key, const T& defaultValue) {
+        return settings != nullptr ? settings->get<T>(key, defaultValue) : defaultValue;
     }
-
 } // namespace syrec

@@ -107,6 +107,24 @@ TEST_F(SyrecParserErrorTestsFixture, NoModuleMatchingUserDefinedExpectedMainModu
     performTestExecution("module userMain(in a[2](16)) skip module main(out b[1](16)) skip", parserConfiguration);
 }
 
+TEST_F(SyrecParserErrorTestsFixture, UserDefinedExpectedMainModuleIdentifierBeingInvalidCausesError) {
+    const std::string          userDefinedExpectedMainModuleIdentifier = "2_invalidIdentifier";
+    syrec::ReadProgramSettings parserConfiguration;
+    parserConfiguration.optionalProgramEntryPointModuleIdentifier = userDefinedExpectedMainModuleIdentifier;
+
+    buildAndRecordExpectedSemanticError<SemanticError::InvalidUserDefinedProgramEntryPointModuleIdentifier>(Message::Position(0, 0), userDefinedExpectedMainModuleIdentifier);
+    performTestExecution("module main(out b[1](16)) skip", parserConfiguration);
+}
+
+TEST_F(SyrecParserErrorTestsFixture, EmptyUserDefinedExpectedMainModuleIdentifierCausesError) {
+    const std::string          userDefinedExpectedMainModuleIdentifier;
+    syrec::ReadProgramSettings parserConfiguration;
+    parserConfiguration.optionalProgramEntryPointModuleIdentifier = userDefinedExpectedMainModuleIdentifier;
+
+    buildAndRecordExpectedSemanticError<SemanticError::InvalidUserDefinedProgramEntryPointModuleIdentifier>(Message::Position(0, 0), userDefinedExpectedMainModuleIdentifier);
+    performTestExecution("module main(out b[1](16)) skip", parserConfiguration);
+}
+
 TEST_F(SyrecParserErrorTestsFixture, DuplicateDeclarationOfModuleUsingSameInParameterTypeCausesError) {
     buildAndRecordExpectedSemanticError<SemanticError::DuplicateModuleDeclaration>(Message::Position(1, 63), "add");
     performTestExecution("module add(in a(4), in b(4), out res(4)) res ^= (a + b) module add(in lOp(4), in rOp(4), out res(4)) res += lOp; res += rOp");

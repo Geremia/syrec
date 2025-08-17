@@ -82,7 +82,9 @@ PYBIND11_MODULE(pysyrec, m) {
             .def("set_double", &Properties::set<double>)
             .def("get_string", py::overload_cast<const std::string&>(&Properties::get<std::string>, py::const_))
             .def("get_double", py::overload_cast<const std::string&>(&Properties::get<double>, py::const_))
-            .def("get_bool", py::overload_cast<const std::string&>(&Properties::get<bool>, py::const_));
+            .def("get_bool", py::overload_cast<const std::string&>(&Properties::get<bool>, py::const_))
+            .def("contains", &Properties::containsKey, "key"_a, "Determine whether a matching entry for the given key exists")
+            .def("remove", &Properties::remove, "key"_a, "Removes the entry matching the given key");
 
     py::enum_<utils::IntegerConstantTruncationOperation>(m, "integer_constant_truncation_operation")
             .value("modulo", utils::IntegerConstantTruncationOperation::Modulo, "Use the modulo operation for the truncation of constant values")
