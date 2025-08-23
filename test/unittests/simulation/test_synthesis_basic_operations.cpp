@@ -755,6 +755,9 @@ REGISTER_TYPED_TEST_SUITE_P(BaseSimulationTestFixture,
                             SynthesisOfUnaryAssignStatementUsingBitwiseNegationOperationInCalledModule,
                             SynthesisOfMultipleStatementsInCalledModule,
                             SynthesisOfRepeatedCallsOfSameModule,
+
+                            // TODO: Tests for recursion and usage of parameters and local variables as module parameter values that could lead to name clashes if first entry of reference chain is used to determine first qubit of variable
+
                             // END of tests for production CallStatement
 
                             // BEGIN of tests for production UncallStatement

@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include "algorithms/synthesis/first_variable_qubit_offset_lookup.hpp"
 #include "algorithms/synthesis/statement_execution_order_stack.hpp"
 #include "core/annotatable_quantum_computation.hpp"
 #include "core/properties.hpp"
@@ -50,7 +51,7 @@ namespace syrec {
         explicit SyrecSynthesis(AnnotatableQuantumComputation& annotatableQuantumComputation);
         virtual ~SyrecSynthesis() = default;
 
-        [[nodiscard]] bool addVariables(const Variable::vec& variables);
+        [[nodiscard]] bool addVariables(const Variable::vec& variables) const;
         void               setMainModule(const Module::ptr& mainModule);
 
         [[maybe_unused]] static bool synthesize(SyrecSynthesis* synthesizer, const Program& program, const Properties::ptr& settings, const Properties::ptr& statistics);
@@ -122,8 +123,8 @@ namespace syrec {
         static bool leftShift(AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<qc::Qubit>& dest, const std::vector<qc::Qubit>& toBeShiftedQubits, unsigned qubitIndexShiftAmount);  // <<
         static bool rightShift(AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<qc::Qubit>& dest, const std::vector<qc::Qubit>& toBeShiftedQubits, unsigned qubitIndexShiftAmount); // >>
 
-        [[nodiscard]] static bool addVariable(AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<unsigned>& dimensions, const Variable::ptr& var, const std::string& arraystr, const std::optional<QubitInliningStack::ptr>& currentModuleCallStack);
-        [[nodiscard]] bool        getVariables(const VariableAccess::ptr& var, std::vector<qc::Qubit>& lines);
+        [[nodiscard]] static std::optional<qc::Qubit> addVariable(AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<unsigned>& dimensions, const Variable::ptr& var, const std::string& arraystr, const std::optional<QubitInliningStack::ptr>& currentModuleCallStack);
+        [[nodiscard]] bool                            getVariables(const VariableAccess::ptr& variableAccess, std::vector<qc::Qubit>& lines);
 
         [[nodiscard]] std::optional<qc::Qubit> getConstantLine(bool value, const std::optional<QubitInliningStack::ptr>& inlinedQubitModuleCallStack);
         [[nodiscard]] bool                     getConstantLines(unsigned bitwidth, unsigned value, std::vector<qc::Qubit>& lines);
@@ -142,9 +143,10 @@ namespace syrec {
         AnnotatableQuantumComputation&                      annotatableQuantumComputation; // NOLINT(cppcoreguidelines-avoid-const-or-ref-data-members)
         std::optional<std::vector<QubitInliningStack::ptr>> moduleCallStackInstances;
         std::unique_ptr<StatementExecutionOrderStack>       statementExecutionOrderStack;
+        // TODO: Clarifying comment as to why we are storing the variable identifiers as std::string_view instead of std::string
+        std::unique_ptr<FirstVariableQubitOffsetLookup> firstVariableQubitOffsetLookup;
 
     private:
-        std::map<Variable::ptr, qc::Qubit>     varLines;
         std::map<bool, std::vector<qc::Qubit>> freeConstLinesMap;
 
         [[nodiscard]] bool synthesizeModuleCall(const std::variant<const CallStatement*, const UncallStatement*>& callStmtVariant);

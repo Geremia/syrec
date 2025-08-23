@@ -55,7 +55,8 @@ namespace syrec {
         annotatableQuantumComputation(annotatableQuantumComputation) {
         freeConstLinesMap.try_emplace(false /* emplacing a default constructed object */);
         freeConstLinesMap.try_emplace(true /* emplacing a default constructed object */);
-        statementExecutionOrderStack = std::make_unique<StatementExecutionOrderStack>();
+        statementExecutionOrderStack   = std::make_unique<StatementExecutionOrderStack>();
+        firstVariableQubitOffsetLookup = std::make_unique<FirstVariableQubitOffsetLookup>();
     }
 
     void SyrecSynthesis::setMainModule(const Module::ptr& mainModule) {
@@ -63,7 +64,7 @@ namespace syrec {
         modules.push(mainModule);
     }
 
-    bool SyrecSynthesis::addVariables(const Variable::vec& variables) {
+    bool SyrecSynthesis::addVariables(const Variable::vec& variables) const {
         // We only want to record inlining information for qubits that are actually inlined (i.e. variables of type 'wire' and 'state').
         // Note that all variables added in this call shared the same inlining stack thus we reuse the latter when adding the former.
         const bool                                   isAnyVarALocalModuleVarBasedOnVarType = std::any_of(variables.cbegin(), variables.cend(), [](const Variable::ptr& variable) { return variable->type == Variable::Type::Wire || variable->type == Variable::Type::State; });
@@ -72,12 +73,15 @@ namespace syrec {
 
         for (std::size_t i = 0; i < variables.size() && couldQubitsForVariablesBeAdded; ++i) {
             const auto& variable = variables[i];
-            // entry in var lines map
-            if (!varLines.try_emplace(variable, annotatableQuantumComputation.getNqubits()).second) {
-                std::cerr << "Tried to add duplicate variable with identifier " << variable->name << " to internal lookup\n";
-                return false;
+            if (const std::optional<qc::Qubit> firstQubitOfVariable = variable != nullptr ? addVariable(annotatableQuantumComputation, variable->dimensions, variable, std::string(), inlineStack) : std::nullopt; firstQubitOfVariable.has_value()) {
+                if (firstVariableQubitOffsetLookup == nullptr || !firstVariableQubitOffsetLookup->registerOrUpdateOffsetToFirstQubitOfVariableInCurrentScope(variable->name, *firstQubitOfVariable)) {
+                    std::cerr << "Failed to register offset to first qubit of variable " << variable->name << "\n";
+                    couldQubitsForVariablesBeAdded = false;
+                }
+            } else {
+                std::cerr << "Failed to register offset to first qubit of variable due to variable being null\n";
+                couldQubitsForVariablesBeAdded = false;
             }
-            couldQubitsForVariablesBeAdded &= addVariable(annotatableQuantumComputation, variable->dimensions, variable, std::string(), inlineStack);
         }
         return couldQubitsForVariablesBeAdded;
     }
@@ -1019,41 +1023,38 @@ namespace syrec {
         return true;
     }
 
-    bool SyrecSynthesis::getVariables(const VariableAccess::ptr& var, std::vector<qc::Qubit>& lines) {
-        Variable::ptr referenceVariableData = var->getVar();
-        // A chain of Call-/UncallStatements will also produce a chain of references set for a modules parameter
-        // that needs to be resolved by walking up the chain until the first entry is reached to be able to determine
-        // which qubit is actually referenced by the variable access
-        while (referenceVariableData->reference != nullptr) {
-            referenceVariableData = referenceVariableData->reference;
-        }
-        assert(referenceVariableData != nullptr);
-
-        qc::Qubit offsetToFirstQubitOfVariable = 0;
-        if (const auto& matchingLookupEntryForVariableIdentifier = varLines.find(referenceVariableData); matchingLookupEntryForVariableIdentifier != varLines.cend()) {
-            offsetToFirstQubitOfVariable = matchingLookupEntryForVariableIdentifier->second;
-        } else {
-            std::cerr << "Failed to determine first qubit for variable with identifier " << referenceVariableData->name << "\n";
+    bool SyrecSynthesis::getVariables(const VariableAccess::ptr& variableAccess, std::vector<qc::Qubit>& lines) {
+        if (variableAccess->var == nullptr) {
+            std::cerr << "Failed to determine qubits for variable access due to referenced variable being null\n";
             return false;
         }
 
-        const std::size_t numDeclaredDimensionsOfVariable = referenceVariableData->dimensions.size();
-        if (!var->indexes.empty()) {
+        const Variable& referencedVariable           = *variableAccess->var.get();
+        qc::Qubit       offsetToFirstQubitOfVariable = 0;
+        if (const std::optional<qc::Qubit> optionalOffsetToFirstQubitOfVariable = firstVariableQubitOffsetLookup != nullptr ? firstVariableQubitOffsetLookup->getOffsetToFirstQubitOfVariableInCurrentScope(referencedVariable.name) : std::nullopt; optionalOffsetToFirstQubitOfVariable.has_value()) {
+            offsetToFirstQubitOfVariable = *optionalOffsetToFirstQubitOfVariable;
+        } else {
+            std::cerr << "Failed to determine first qubit for variable with identifier " << referencedVariable.name << "\n";
+            return false;
+        }
+
+        const std::size_t numDeclaredDimensionsOfVariable = referencedVariable.dimensions.size();
+        if (!variableAccess->indexes.empty()) {
             // check if it is all numeric_expressions
-            if (static_cast<std::size_t>(std::count_if(var->indexes.cbegin(), var->indexes.cend(), [&](const auto& p) { return dynamic_cast<NumericExpression*>(p.get()); })) == numDeclaredDimensionsOfVariable) {
+            if (static_cast<std::size_t>(std::count_if(variableAccess->indexes.cbegin(), variableAccess->indexes.cend(), [&](const auto& p) { return dynamic_cast<NumericExpression*>(p.get()); })) == numDeclaredDimensionsOfVariable) {
                 for (std::size_t i = 0U; i < numDeclaredDimensionsOfVariable; ++i) {
-                    const auto evaluatedDimensionIndexValue = dynamic_cast<NumericExpression*>(var->indexes.at(i).get())->value->evaluate(loopMap);
+                    const auto evaluatedDimensionIndexValue = dynamic_cast<NumericExpression*>(variableAccess->indexes.at(i).get())->value->evaluate(loopMap);
                     qc::Qubit  aggregateValue               = evaluatedDimensionIndexValue;
                     for (std::size_t j = i + 1; j < numDeclaredDimensionsOfVariable; ++j) {
-                        aggregateValue *= referenceVariableData->dimensions[i];
+                        aggregateValue *= referencedVariable.dimensions[i];
                     }
-                    offsetToFirstQubitOfVariable += aggregateValue * referenceVariableData->bitwidth;
+                    offsetToFirstQubitOfVariable += aggregateValue * referencedVariable.bitwidth;
                 }
             }
         }
 
-        if (var->range) {
-            auto [nfirst, nsecond] = *var->range;
+        if (variableAccess->range) {
+            auto [nfirst, nsecond] = *variableAccess->range;
 
             const unsigned first  = nfirst->evaluate(loopMap);
             const unsigned second = nsecond->evaluate(loopMap);
@@ -1068,13 +1069,13 @@ namespace syrec {
                 }
             }
         } else {
-            for (unsigned i = 0U; i < referenceVariableData->bitwidth; ++i) {
+            for (unsigned i = 0U; i < referencedVariable.bitwidth; ++i) {
                 lines.emplace_back(offsetToFirstQubitOfVariable + i);
             }
         }
 
         if (lines.empty()) {
-            std::cerr << "Failed to determine accessed qubits for variable access on variable with identifier " << referenceVariableData->name << "\n";
+            std::cerr << "Failed to determine accessed qubits for variable access on variable with identifier " << referencedVariable.name << "\n";
             return false;
         }
         return true;
@@ -1093,18 +1094,18 @@ namespace syrec {
                 return std::nullopt;
             }
         } else {
-            const auto        qubitIndex          = static_cast<qc::Qubit>(annotatableQuantumComputation.getNqubits());
-            const std::string qubitLabel          = InternalQubitLabelBuilder::buildAncillaryQubitLabel(annotatableQuantumComputation.getNqubits(), value);
+            const auto        expectedQubitIndex  = static_cast<qc::Qubit>(annotatableQuantumComputation.getNqubits());
+            const std::string qubitLabel          = InternalQubitLabelBuilder::buildAncillaryQubitLabel(expectedQubitIndex, value);
             auto              inliningInformation = AnnotatableQuantumComputation::InlinedQubitInformation();
             if (shouldQubitInlineInformationBeRecorded()) {
                 inliningInformation.inlineStack = inlinedQubitModuleCallStack;
             }
 
-            const std::optional<qc::Qubit> generatedQubitIndex = annotatableQuantumComputation.addPreliminaryAncillaryQubit(qubitLabel, value, inliningInformation);
-            if (!generatedQubitIndex.has_value() || *generatedQubitIndex != qubitIndex) {
+            const std::optional<qc::Qubit> actualQubitIndex = annotatableQuantumComputation.addPreliminaryAncillaryQubit(qubitLabel, value, inliningInformation);
+            if (!actualQubitIndex.has_value() || *actualQubitIndex != expectedQubitIndex) {
                 return std::nullopt;
             }
-            constLine = qubitIndex;
+            constLine = expectedQubitIndex;
         }
         return constLine;
     }
@@ -1155,8 +1156,9 @@ namespace syrec {
         }
     }
 
-    bool SyrecSynthesis::addVariable(AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<unsigned>& dimensions, const Variable::ptr& var, const std::string& arraystr, const std::optional<QubitInliningStack::ptr>& currentModuleCallStack) {
-        bool couldQubitsForVariableBeAdded = true;
+    std::optional<qc::Qubit> SyrecSynthesis::addVariable(AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<unsigned>& dimensions, const Variable::ptr& var, const std::string& arraystr, const std::optional<QubitInliningStack::ptr>& currentModuleCallStack) {
+        bool                     couldQubitsForVariableBeAdded = true;
+        std::optional<qc::Qubit> firstQubitOfVariable;
 
         const auto currNumQubits = annotatableQuantumComputation.getNqubits();
         if (dimensions.empty()) {
@@ -1180,17 +1182,21 @@ namespace syrec {
                     optionalQubitInliningInformation->userDeclaredQubitLabel = userDeclaredQubitLabel;
                     optionalQubitInliningInformation->inlineStack            = currentModuleCallStack;
                 }
-                couldQubitsForVariableBeAdded &= annotatableQuantumComputation.addNonAncillaryQubit(internalQubitLabel, isGarbageQubit, optionalQubitInliningInformation).has_value();
+                const std::optional<qc::Qubit> addedQubitIndex = annotatableQuantumComputation.addNonAncillaryQubit(internalQubitLabel, isGarbageQubit, optionalQubitInliningInformation);
+                couldQubitsForVariableBeAdded                  = addedQubitIndex.has_value();
+                firstQubitOfVariable                           = (!firstQubitOfVariable.has_value() && couldQubitsForVariableBeAdded) ? addedQubitIndex : firstQubitOfVariable;
             }
         } else {
             const auto        len = static_cast<std::size_t>(dimensions.front());
             const std::vector newDimensions(dimensions.begin() + 1U, dimensions.end());
 
             for (std::size_t i = 0U; i < len && couldQubitsForVariableBeAdded; ++i) {
-                couldQubitsForVariableBeAdded &= addVariable(annotatableQuantumComputation, newDimensions, var, arraystr + "[" + std::to_string(i) + "]", currentModuleCallStack);
+                const std::optional<qc::Qubit> addedQubitIndexForValueOfDimension = addVariable(annotatableQuantumComputation, newDimensions, var, arraystr + "[" + std::to_string(i) + "]", currentModuleCallStack);
+                couldQubitsForVariableBeAdded                                     = addedQubitIndexForValueOfDimension.has_value();
+                firstQubitOfVariable                                              = (!firstQubitOfVariable.has_value() && couldQubitsForVariableBeAdded) ? addedQubitIndexForValueOfDimension : firstQubitOfVariable;
             }
         }
-        return couldQubitsForVariableBeAdded;
+        return firstQubitOfVariable;
     }
 
     std::optional<QubitInliningStack::ptr> SyrecSynthesis::getLastCreatedModuleCallStackInstance() const {
@@ -1223,23 +1229,54 @@ namespace syrec {
     bool SyrecSynthesis::synthesizeModuleCall(const std::variant<const CallStatement*, const UncallStatement*>& callStmtVariant) {
         const CallStatement*   callStmt   = std::holds_alternative<const CallStatement*>(callStmtVariant) ? std::get<const CallStatement*>(callStmtVariant) : nullptr;
         const UncallStatement* uncallStmt = std::holds_alternative<const UncallStatement*>(callStmtVariant) ? std::get<const UncallStatement*>(callStmtVariant) : nullptr;
-        assert(callStmt != nullptr || uncallStmt != nullptr);
+        if (callStmt == nullptr && uncallStmt == nullptr) {
+            std::cerr << "Failed to synthesize module call/uncall due to IR entity of corresponding CallStatement/UncallStatement being null\n";
+            return false;
+        }
 
-        const std::vector<std::string>& moduleParameters = callStmt != nullptr ? callStmt->parameters : uncallStmt->parameters;
-        const Module::ptr&              targetModule     = callStmt != nullptr ? callStmt->target : uncallStmt->target;
+        if (firstVariableQubitOffsetLookup == nullptr) {
+            std::cerr << "Internal lookup of offsets to first qubits of variables was null\n";
+            return false;
+        }
+
+        const std::vector<std::string>& callerProvidedParameterValues = callStmt != nullptr ? callStmt->parameters : uncallStmt->parameters;
+        const Module::ptr&              targetModule                  = callStmt != nullptr ? callStmt->target : uncallStmt->target;
 
         // 1. Adjust the references module's parameters to the call arguments
-        for (std::size_t i = 0U; i < moduleParameters.size(); ++i) {
+        firstVariableQubitOffsetLookup->openNewVariableQubitOffsetScope();
+        for (std::size_t i = 0U; i < callerProvidedParameterValues.size(); ++i) {
             assert(!modules.empty());
 
-            const std::string_view&             parameterIdentifier                        = moduleParameters.at(i);
-            const std::optional<Variable::ptr>& matchingParameterOrVariableOfCurrentModule = modules.top()->findParameterOrVariable(parameterIdentifier);
+            const std::string_view&             callerProvidedParameterVariableIdentifier  = callerProvidedParameterValues.at(i);
+            const std::optional<Variable::ptr>& matchingParameterOrVariableOfCurrentModule = modules.top()->findParameterOrVariable(callerProvidedParameterVariableIdentifier);
             if (!matchingParameterOrVariableOfCurrentModule.has_value() || matchingParameterOrVariableOfCurrentModule.value() == nullptr) {
-                std::cerr << "Failed to find matching parameter or variable of module " << modules.top()->name << " for parameter '" << parameterIdentifier << "' when setting references of parameters of " << (callStmt != nullptr ? "called" : "uncalled") << " module " << targetModule->name << "\n";
+                std::cerr << "Failed to find matching parameter or variable of module " << modules.top()->name << " for parameter '" << callerProvidedParameterVariableIdentifier << "' when setting references of parameters of " << (callStmt != nullptr ? "called" : "uncalled") << " module " << targetModule->name;
                 return false;
             }
-            const auto& moduleParameter = targetModule->parameters.at(i);
-            moduleParameter->setReference(*matchingParameterOrVariableOfCurrentModule);
+
+            const auto& formalModuleParameter = targetModule->parameters.at(i);
+            // Since we have opened a new variable qubit offset scope to register the offsets for the parameters as well as local variables of the called/uncalled module (target module) we only need to include
+            // the parent scope that contains the information about the caller provided arguments to fix the qubit offsets for the parameters of the called/uncalled module.
+            // Additionally, due to the parser already verifying that all variable declarations inside of the target module are unique we can simply create the lookup information for the first qubits of the
+            // parameters of the target module as the mapping (caller argument -> parameter). To determine the first qubit of a parameter used in a VariableAccess in any statement of the target module is then
+            // equal to a simple lookup in the syrec::FirstVariableQubitOffsetLookup using the parameter identifier thus any potential name clashes arising between the local variable identifiers and the mapping caller argument -> parameter
+            // is prevented. An example for a name clash if we were to use the reference chain from caller argument -> parameter in a nested call/uncall of a module is:
+            //
+            // module add(inout a(4))
+            //   wire x(4)
+            //   a += x
+            //
+            //  module main(inout x(4))
+            //    call add(x) // Using the identifier of the caller argument to determine the first qubit of the formal parameter 'a' in the called module would result in a name clash between the local variable and caller argument
+            const std::optional<qc::Qubit> offsetToFirstQubitOfParameterValue = firstVariableQubitOffsetLookup->getOffsetToFirstQubitOfVariableInCurrentScope(callerProvidedParameterVariableIdentifier, true);
+            if (!offsetToFirstQubitOfParameterValue.has_value()) {
+                std::cerr << "Failed to determine offset to first qubit of variable '" << callerProvidedParameterVariableIdentifier << "' while trying to set reference for parameter " << formalModuleParameter->name << " of " << (callStmt != nullptr ? "called" : "uncalled") << " module " << targetModule->name << "\n";
+                return false;
+            }
+            if (!firstVariableQubitOffsetLookup->registerOrUpdateOffsetToFirstQubitOfVariableInCurrentScope(formalModuleParameter->name, *offsetToFirstQubitOfParameterValue)) {
+                std::cerr << "Failed to register offset to first qubit of module parameter '" << formalModuleParameter->name << "' of " << (callStmt != nullptr ? "called" : "uncalled") << " module " << targetModule->name << "\n";
+                return false;
+            }
         }
 
         // 2. Create new lines for the module's variables
@@ -1283,9 +1320,9 @@ namespace syrec {
                 } else {
                     const auto offsetFromLastStmtToCurrentlyProcessedOneInUncalledModule = static_cast<std::size_t>(std::distance(statements.rend(), it));
                     if (callStmt != nullptr) {
-                        std::cerr << "Failed to create inverse of statement at index " << std::to_string(statements.size() - offsetFromLastStmtToCurrentlyProcessedOneInUncalledModule) << " in body of called module " << targetModule->name << "(CALL @ " << std::to_string(it->get()->lineNumber) << ")\n";
+                        std::cerr << "Failed to create inverse of statement at index " << std::to_string(statements.size() - offsetFromLastStmtToCurrentlyProcessedOneInUncalledModule) << " in body of called module " << targetModule->name << "(CALL @ " << std::to_string(it->get()->lineNumber) << ")";
                     } else {
-                        std::cerr << "Failed to create inverse of statement at index " << std::to_string(statements.size() - offsetFromLastStmtToCurrentlyProcessedOneInUncalledModule) << " in body of uncalled module " << targetModule->name << "(UNCALL @ " << std::to_string(it->get()->lineNumber) << ")\n";
+                        std::cerr << "Failed to create inverse of statement at index " << std::to_string(statements.size() - offsetFromLastStmtToCurrentlyProcessedOneInUncalledModule) << " in body of uncalled module " << targetModule->name << "(UNCALL @ " << std::to_string(it->get()->lineNumber) << ")";
                     }
                     synthesisOfModuleBodyOk = false;
                 }
@@ -1297,17 +1334,10 @@ namespace syrec {
             synthesisOfModuleBodyOk = false;
         }
 
-        // The mapping of SyReC variables to its associated qubits is no longer needed for the local variables of a SyReC module after the body of a called/uncalled module was synthesized, thus we remove these mappings
-        for (auto localModuleVariableIterator = targetModule->variables.begin(); localModuleVariableIterator != targetModule->variables.end() && synthesisOfModuleBodyOk; ++localModuleVariableIterator) {
-            auto matchingVarLinesLookupEntryForLocalVariable = varLines.find(*localModuleVariableIterator);
-            if (matchingVarLinesLookupEntryForLocalVariable == varLines.cend()) {
-                std::cerr << "Failed to remove qubit lines for local module variable " << matchingVarLinesLookupEntryForLocalVariable->first->name << " during cleanup of " << (callStmt != nullptr ? "called" : "uncalled") << " module " << targetModule->name;
-                synthesisOfModuleBodyOk = false;
-            } else {
-                varLines.erase(*localModuleVariableIterator);
-            }
+        if (!firstVariableQubitOffsetLookup->closeVariableQubitOffsetScope()) {
+            std::cerr << "Failed to close qubit offset scope for parameters and local variables during cleanup after synthesis of " << (callStmt != nullptr ? "called" : "uncalled") << " module " << targetModule->name << "\n";
+            return false;
         }
-
         modules.pop();
         return synthesisOfModuleBodyOk;
     }
