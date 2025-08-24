@@ -160,14 +160,20 @@ TEST(FirstVariableQubitOffsetLookupTests, RegisteringQubitOffsetForEmptyVariable
 
     ASSERT_TRUE(qubitOffsetLookup.registerOrUpdateOffsetToFirstQubitOfVariableInCurrentScope(firstVariableOfFirstScopeIdentifier, expectedOffsetForFirstVariableOfFirstScope));
     ASSERT_TRUE(qubitOffsetLookup.registerOrUpdateOffsetToFirstQubitOfVariableInCurrentScope(secondVariableOfFirstScopeIdentifier, expectedOffsetForSecondVariableOfFirstScope));
+    ASSERT_FALSE(qubitOffsetLookup.registerOrUpdateOffsetToFirstQubitOfVariableInCurrentScope("", expectedOffsetForSecondVariableOfFirstScope));
+
     ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, firstVariableOfFirstScopeIdentifier, expectedOffsetForFirstVariableOfFirstScope));
     ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, secondVariableOfFirstScopeIdentifier, expectedOffsetForSecondVariableOfFirstScope));
     ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, "", std::nullopt));
 }
 
 TEST(FirstVariableQubitOffsetLookupTests, RegisteringQubitOffsetInEmptyLookupNotPossible) {
-    const FirstVariableQubitOffsetLookup qubitOffsetLookup;
-    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, "", std::nullopt));
+    FirstVariableQubitOffsetLookup qubitOffsetLookup;
+
+    constexpr std::string_view variableIdentifier        = "a";
+    constexpr qc::Qubit        expectedOffsetForVariable = 1U;
+    ASSERT_FALSE(qubitOffsetLookup.registerOrUpdateOffsetToFirstQubitOfVariableInCurrentScope(variableIdentifier, expectedOffsetForVariable));
+    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, variableIdentifier, std::nullopt));
 }
 
 TEST(FirstVariableQubitOffsetLookupTests, GetQubitOffsetForVariablesWithMatchingEntriesInMultipleScopes) {
