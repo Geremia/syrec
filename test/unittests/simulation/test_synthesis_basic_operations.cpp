@@ -505,6 +505,10 @@ TYPED_TEST_P(BaseSimulationTestFixture, SynthesisOfMultipleStatementsInCalledMod
 TYPED_TEST_P(BaseSimulationTestFixture, SynthesisOfRepeatedCallsOfSameModule) {
     this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
 }
+
+TYPED_TEST_P(BaseSimulationTestFixture, SynthesisOfNestedModuleCallHierarchy) {
+    this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
+}
 // END of tests for production CallStatement
 
 // BEGIN of tests for production UncallStatement
@@ -621,6 +625,10 @@ TYPED_TEST_P(BaseSimulationTestFixture, InverseOfMultipleStatementsInUncalledMod
 }
 
 TYPED_TEST_P(BaseSimulationTestFixture, SynthesisOfRepeatedUncallsOfSameModule) {
+    this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
+}
+
+TYPED_TEST_P(BaseSimulationTestFixture, SynthesisOfNestedModuleUncallHierarchy) {
     this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
 }
 // END of tests for production UncallStatement
@@ -755,9 +763,7 @@ REGISTER_TYPED_TEST_SUITE_P(BaseSimulationTestFixture,
                             SynthesisOfUnaryAssignStatementUsingBitwiseNegationOperationInCalledModule,
                             SynthesisOfMultipleStatementsInCalledModule,
                             SynthesisOfRepeatedCallsOfSameModule,
-
-                            // TODO: Tests for recursion and usage of parameters and local variables as module parameter values that could lead to name clashes if first entry of reference chain is used to determine first qubit of variable
-
+                            SynthesisOfNestedModuleCallHierarchy,
                             // END of tests for production CallStatement
 
                             // BEGIN of tests for production UncallStatement
@@ -790,7 +796,8 @@ REGISTER_TYPED_TEST_SUITE_P(BaseSimulationTestFixture,
                             InverseOfUnaryAssignStatementUsingDecrementOperationInUncalledModule,
                             InverseOfUnaryAssignStatementUsingBitwiseNegationOperationInUncalledModule,
                             InverseOfMultipleStatementsInUncalledModule,
-                            SynthesisOfRepeatedUncallsOfSameModule
+                            SynthesisOfRepeatedUncallsOfSameModule,
+                            SynthesisOfNestedModuleUncallHierarchy
                             // END of tests for production UncallStatement
 );
 

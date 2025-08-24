@@ -10,6 +10,7 @@
 
 #include "algorithms/synthesis/syrec_synthesis.hpp"
 
+#include "algorithms/synthesis/first_variable_qubit_offset_lookup.hpp"
 #include "algorithms/synthesis/internal_qubit_label_builder.hpp"
 #include "algorithms/synthesis/statement_execution_order_stack.hpp"
 #include "core/annotatable_quantum_computation.hpp"
@@ -162,6 +163,12 @@ namespace syrec {
             synthesizer->moduleCallStackInstances->emplace_back(mainModuleInlineStack);
         }
 
+        if (synthesizer->firstVariableQubitOffsetLookup == nullptr) {
+            std::cerr << "Internal lookup for offsets to first qubits of variables was not correctly initialized\n";
+            return false;
+        }
+
+        synthesizer->firstVariableQubitOffsetLookup->openNewVariableQubitOffsetScope();
         // create lines for global variables
         if (!synthesizer->addVariables(main->parameters)) {
             std::cerr << "Failed to create qubits for parameters of main module of SyReC program\n";
@@ -179,6 +186,11 @@ namespace syrec {
                 std::cerr << "Failed to mark qubit" << std::to_string(ancillaryQubit) << " as ancillary qubit\n";
                 return false;
             }
+        }
+
+        if (!synthesizer->firstVariableQubitOffsetLookup->closeVariableQubitOffsetScope()) {
+            std::cerr << "Failed to close qubit offset scope for parameters and local variables during cleanup after synthesis of main module " << main->name << "\n";
+            return false;
         }
 
         if (statistics != nullptr) {
