@@ -268,7 +268,6 @@ class SyReCEditor(QtWidgets.QWidget):  # type: ignore[misc]
         self.stat_action.triggered.connect(self.stat)
 
         self.synthesis_settings = syrec.properties()
-        self.synthesis_settings.set_string(syrec.SYNTHESIS_CONFIG_KEY_MAIN_MODULE_IDENTIFIER, "")
         self.synthesis_settings.set_bool(syrec.SYNTHESIS_CONFIG_KEY_GENERATE_INLINE_DEBUG_INFORMATION, False)
 
         self.synthesis_settings_update_button = QtWidgets.QPushButton("Update synthesis settings", self)
@@ -963,9 +962,12 @@ class SynthesisSettingsUpdater(QtWidgets.QDialog):  # type: ignore[misc]
         layout = QtWidgets.QVBoxLayout(self)
         expected_main_module_identifier_layout = QtWidgets.QHBoxLayout()
         expected_main_module_identifier_label = QtWidgets.QLabel("Expected main module identifier:")
-        self.expected_main_module_identifier_textbox = QtWidgets.QLineEdit(
-            synthesis_settings.get_string(syrec.SYNTHESIS_CONFIG_KEY_MAIN_MODULE_IDENTIFIER)
-        )
+        self.expected_main_module_identifier_textbox = QtWidgets.QLineEdit()
+        if synthesis_settings.contains(syrec.SYNTHESIS_CONFIG_KEY_MAIN_MODULE_IDENTIFIER):
+            self.expected_main_module_identifier_textbox.setText(
+                synthesis_settings.get_string(syrec.SYNTHESIS_CONFIG_KEY_MAIN_MODULE_IDENTIFIER)
+            )
+
         self.expected_main_module_identifier_textbox.setPlaceholderText(
             "Leave blank if last declared module of SyReC program should be used as main module..."
         )
