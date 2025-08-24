@@ -37,24 +37,21 @@ namespace syrec {
 
         /**
          * Register or update the qubit offset for a variable in the last opened scope.
-         * @param variableIdentifier The identifier of the variable for which an offset shall be recorded
-         * @param offsetToFirstQubitOfVariable The offset to record
+         * @param variableIdentifier The identifier of the variable for which an offset shall be recorded.
+         * @param offsetToFirstQubitOfVariable The offset to record.
          * @return Whether an entry was added or updated in the last opened scope.
          */
         [[maybe_unused]] bool registerOrUpdateOffsetToFirstQubitOfVariableInCurrentScope(const std::string_view& variableIdentifier, qc::Qubit offsetToFirstQubitOfVariable);
 
         /**
          * Fetch the last registered offset to the first qubit of a variable in the last opened scope.
-         * @param variableIdentifier The identifier of the variable for which the registered offset shall be fetched
-         * @param alsoSearchInParentScope If the last opened scope did not contain a matching entry should the search be continued in the parent scope
+         * @param variableIdentifier The identifier of the variable for which the registered offset shall be fetched.
          * @return The registered offset to the first qubit of the variable, otherwise std::nullopt.
          */
-        [[nodiscard]] std::optional<qc::Qubit> getOffsetToFirstQubitOfVariableInCurrentScope(const std::string_view& variableIdentifier, bool alsoSearchInParentScope = false) const;
+        [[nodiscard]] std::optional<qc::Qubit> getOffsetToFirstQubitOfVariableInCurrentScope(const std::string_view& variableIdentifier) const;
 
     protected:
         using QubitOffsetScope = std::unordered_map<std::string_view, qc::Qubit>;
-
-        [[nodiscard]] static std::optional<qc::Qubit> getOffsetToFirstQubitOfVariableInScope(const std::string_view& variableIdentifier, const QubitOffsetScope& scope);
-        std::vector<QubitOffsetScope>                 recordedOffsetsToFirstQubitPerVariableScopes;
+        std::vector<QubitOffsetScope> recordedOffsetsToFirstQubitPerVariableScopes;
     };
 } // namespace syrec

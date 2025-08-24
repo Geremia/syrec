@@ -18,8 +18,8 @@
 using namespace syrec;
 
 namespace {
-    void assertFetchedQubitOffsetMatchesExpectedValue(const FirstVariableQubitOffsetLookup& qubitOffsetLookup, const std::string_view& variableIdentifier, const std::optional<qc::Qubit>& expectedQubitOffset, bool includeParentScopeInSearch = false) {
-        const std::optional<qc::Qubit> actualQubitOffset = qubitOffsetLookup.getOffsetToFirstQubitOfVariableInCurrentScope(variableIdentifier, includeParentScopeInSearch);
+    void assertFetchedQubitOffsetMatchesExpectedValue(const FirstVariableQubitOffsetLookup& qubitOffsetLookup, const std::string_view& variableIdentifier, const std::optional<qc::Qubit>& expectedQubitOffset) {
+        const std::optional<qc::Qubit> actualQubitOffset = qubitOffsetLookup.getOffsetToFirstQubitOfVariableInCurrentScope(variableIdentifier);
         if (expectedQubitOffset.has_value()) {
             ASSERT_TRUE(actualQubitOffset.has_value());
             ASSERT_EQ(expectedQubitOffset.value(), actualQubitOffset.value()) << " Expected qubit offset mismatch for variable " << variableIdentifier;
@@ -55,8 +55,8 @@ TEST(FirstVariableQubitOffsetLookupTests, OpenNewScopeInLookupAlreadyContainingE
     ASSERT_NO_FATAL_FAILURE(qubitOffsetLookup.openNewVariableQubitOffsetScope());
     ASSERT_TRUE(qubitOffsetLookup.registerOrUpdateOffsetToFirstQubitOfVariableInCurrentScope(firstVariableOfSecondScopeIdentifier, expectedOffsetForFirstVariableOfSecondScope));
 
-    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, firstVariableOfFirstScopeIdentifier, expectedOffsetForFirstVariableOfFirstScope, true));
-    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, secondVariableOfFirstScopeIdentifier, expectedOffsetForSecondVariableOfFirstScope, true));
+    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, firstVariableOfFirstScopeIdentifier, std::nullopt));
+    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, secondVariableOfFirstScopeIdentifier, std::nullopt));
 }
 
 TEST(FirstVariableQubitOffsetLookupTests, CloseScopeInEmptyLookup) {
@@ -86,12 +86,11 @@ TEST(FirstVariableQubitOffsetLookupTests, CloseScopeInLookupAlreadyContainingEnt
     ASSERT_TRUE(qubitOffsetLookup.registerOrUpdateOffsetToFirstQubitOfVariableInCurrentScope(firstVariableOfSecondScopeIdentifier, expectedOffsetForFirstVariableOfSecondScope));
     ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, firstVariableOfSecondScopeIdentifier, expectedOffsetForFirstVariableOfSecondScope));
 
-    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, firstVariableOfFirstScopeIdentifier, expectedOffsetForFirstVariableOfFirstScope, true));
-    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, secondVariableOfFirstScopeIdentifier, expectedOffsetForSecondVariableOfFirstScope, true));
+    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, firstVariableOfFirstScopeIdentifier, std::nullopt));
+    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, secondVariableOfFirstScopeIdentifier, std::nullopt));
 
     ASSERT_TRUE(qubitOffsetLookup.closeVariableQubitOffsetScope());
     ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, firstVariableOfSecondScopeIdentifier, std::nullopt));
-
     ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, firstVariableOfFirstScopeIdentifier, expectedOffsetForFirstVariableOfFirstScope));
     ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, secondVariableOfFirstScopeIdentifier, expectedOffsetForSecondVariableOfFirstScope));
 
@@ -141,9 +140,8 @@ TEST(FirstVariableQubitOffsetLookupTests, RegisterAndUpdateAlreadyExistingVariab
     ASSERT_NO_FATAL_FAILURE(qubitOffsetLookup.openNewVariableQubitOffsetScope());
     ASSERT_TRUE(qubitOffsetLookup.registerOrUpdateOffsetToFirstQubitOfVariableInCurrentScope(firstVariableOfFirstScopeIdentifier, expectedUpdatedOffsetForFirstVariableOfFirstScope));
 
-    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, firstVariableOfFirstScopeIdentifier, expectedUpdatedOffsetForFirstVariableOfFirstScope, false));
-    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, firstVariableOfFirstScopeIdentifier, expectedUpdatedOffsetForFirstVariableOfFirstScope, true));
-    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, secondVariableOfFirstScopeIdentifier, std::nullopt, false));
+    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, firstVariableOfFirstScopeIdentifier, expectedUpdatedOffsetForFirstVariableOfFirstScope));
+    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, secondVariableOfFirstScopeIdentifier, std::nullopt));
 
     ASSERT_TRUE(qubitOffsetLookup.closeVariableQubitOffsetScope());
     ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, firstVariableOfFirstScopeIdentifier, expectedInitialOffsetForFirstVariableOfFirstScope));
@@ -199,16 +197,18 @@ TEST(FirstVariableQubitOffsetLookupTests, GetQubitOffsetForVariablesWithMatching
     ASSERT_TRUE(qubitOffsetLookup.registerOrUpdateOffsetToFirstQubitOfVariableInCurrentScope(secondVariableIdentifier, expectedOffsetForSecondVariableInFourthScope));
     ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, secondVariableIdentifier, expectedOffsetForSecondVariableInFourthScope));
 
-    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, firstVariableIdentifier, std::nullopt, false));
-    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, firstVariableIdentifier, expectedOffsetForFirstVariableInThirdScope, true));
-
-    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, secondVariableIdentifier, expectedOffsetForSecondVariableInFourthScope, false));
-    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, secondVariableIdentifier, expectedOffsetForSecondVariableInFourthScope, true));
+    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, firstVariableIdentifier, std::nullopt));
+    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, secondVariableIdentifier, expectedOffsetForSecondVariableInFourthScope));
 
     ASSERT_TRUE(qubitOffsetLookup.closeVariableQubitOffsetScope());
-    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, firstVariableIdentifier, expectedOffsetForFirstVariableInThirdScope, false));
-    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, firstVariableIdentifier, expectedOffsetForFirstVariableInThirdScope, true));
+    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, firstVariableIdentifier, expectedOffsetForFirstVariableInThirdScope));
+    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, secondVariableIdentifier, std::nullopt));
 
-    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, secondVariableIdentifier, std::nullopt, false));
-    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, secondVariableIdentifier, expectedOffsetForSecondVariableInSecondScope, true));
+    ASSERT_TRUE(qubitOffsetLookup.closeVariableQubitOffsetScope());
+    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, firstVariableIdentifier, std::nullopt));
+    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, secondVariableIdentifier, expectedOffsetForSecondVariableInSecondScope));
+
+    ASSERT_TRUE(qubitOffsetLookup.closeVariableQubitOffsetScope());
+    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, firstVariableIdentifier, expectedOffsetForFirstVariableInFirstScope));
+    ASSERT_NO_FATAL_FAILURE(assertFetchedQubitOffsetMatchesExpectedValue(qubitOffsetLookup, secondVariableIdentifier, std::nullopt));
 }

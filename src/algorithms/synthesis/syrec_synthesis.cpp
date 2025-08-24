@@ -1254,8 +1254,9 @@ namespace syrec {
         const std::vector<std::string>& callerProvidedParameterValues = callStmt != nullptr ? callStmt->parameters : uncallStmt->parameters;
         const Module::ptr&              targetModule                  = callStmt != nullptr ? callStmt->target : uncallStmt->target;
 
+        std::unordered_map<std::string_view, qc::Qubit> offsetToFirstQubitPerFormalParameterOfTargetModule;
+
         // 1. Adjust the references module's parameters to the call arguments
-        firstVariableQubitOffsetLookup->openNewVariableQubitOffsetScope();
         for (std::size_t i = 0U; i < callerProvidedParameterValues.size(); ++i) {
             assert(!modules.empty());
 
@@ -1266,10 +1267,11 @@ namespace syrec {
                 return false;
             }
 
-            const auto& formalModuleParameter = targetModule->parameters.at(i);
-            // Since we have opened a new variable qubit offset scope to register the offsets for the parameters as well as local variables of the called/uncalled module (target module) we only need to include
-            // the parent scope that contains the information about the caller provided arguments to fix the qubit offsets for the parameters of the called/uncalled module.
-            // Additionally, due to the parser already verifying that all variable declarations inside of the target module are unique we can simply create the lookup information for the first qubits of the
+            const auto& formalModuleParameter                                               = targetModule->parameters.at(i);
+            offsetToFirstQubitPerFormalParameterOfTargetModule[formalModuleParameter->name] = 0;
+            // Since we have not opened a new variable qubit offset scope to register the offsets for the parameters as well as for the local variables of the called/uncalled module (target module) our search for the first qubits
+            // of the caller provided arguments of the target module can be restricted to the current activate variable qubit offset lookup scope.
+            // Additionally, due to the parser already verifying that all variable declarations inside of the target module are unique allows one to simply create the lookup information for the first qubits of the
             // parameters of the target module as the mapping (caller argument -> parameter). To determine the first qubit of a parameter used in a VariableAccess in any statement of the target module is then
             // equal to a simple lookup in the syrec::FirstVariableQubitOffsetLookup using the parameter identifier thus any potential name clashes arising between the local variable identifiers and the mapping caller argument -> parameter
             // is prevented. An example for a name clash if we were to use the reference chain from caller argument -> parameter in a nested call/uncall of a module is:
@@ -1280,14 +1282,22 @@ namespace syrec {
             //
             //  module main(inout x(4))
             //    call add(x) // Using the identifier of the caller argument to determine the first qubit of the formal parameter 'a' in the called module would result in a name clash between the local variable and caller argument
-            const std::optional<qc::Qubit> offsetToFirstQubitOfParameterValue = firstVariableQubitOffsetLookup->getOffsetToFirstQubitOfVariableInCurrentScope(callerProvidedParameterVariableIdentifier, true);
+            const std::optional<qc::Qubit> offsetToFirstQubitOfParameterValue = firstVariableQubitOffsetLookup->getOffsetToFirstQubitOfVariableInCurrentScope(callerProvidedParameterVariableIdentifier);
             if (!offsetToFirstQubitOfParameterValue.has_value()) {
                 std::cerr << "Failed to determine offset to first qubit of variable '" << callerProvidedParameterVariableIdentifier << "' while trying to set reference for parameter " << formalModuleParameter->name << " of " << (callStmt != nullptr ? "called" : "uncalled") << " module " << targetModule->name << "\n";
                 return false;
             }
-            if (!firstVariableQubitOffsetLookup->registerOrUpdateOffsetToFirstQubitOfVariableInCurrentScope(formalModuleParameter->name, *offsetToFirstQubitOfParameterValue)) {
-                std::cerr << "Failed to register offset to first qubit of module parameter '" << formalModuleParameter->name << "' of " << (callStmt != nullptr ? "called" : "uncalled") << " module " << targetModule->name << "\n";
-                return false;
+
+            offsetToFirstQubitPerFormalParameterOfTargetModule[formalModuleParameter->name] = *offsetToFirstQubitOfParameterValue;
+        }
+
+        if (!offsetToFirstQubitPerFormalParameterOfTargetModule.empty()) {
+            firstVariableQubitOffsetLookup->openNewVariableQubitOffsetScope();
+            for (const auto& [formalParameterIdentifier, offsetToFirstQubit]: offsetToFirstQubitPerFormalParameterOfTargetModule) {
+                if (!firstVariableQubitOffsetLookup->registerOrUpdateOffsetToFirstQubitOfVariableInCurrentScope(formalParameterIdentifier, offsetToFirstQubit)) {
+                    std::cerr << "Failed to register offset to first qubit of module parameter '" << formalParameterIdentifier << "' of " << (callStmt != nullptr ? "called" : "uncalled") << " module " << targetModule->name << "\n";
+                    return false;
+                }
             }
         }
 
@@ -1346,7 +1356,7 @@ namespace syrec {
             synthesisOfModuleBodyOk = false;
         }
 
-        if (!firstVariableQubitOffsetLookup->closeVariableQubitOffsetScope()) {
+        if (!offsetToFirstQubitPerFormalParameterOfTargetModule.empty() && !firstVariableQubitOffsetLookup->closeVariableQubitOffsetScope()) {
             std::cerr << "Failed to close qubit offset scope for parameters and local variables during cleanup after synthesis of " << (callStmt != nullptr ? "called" : "uncalled") << " module " << targetModule->name << "\n";
             return false;
         }

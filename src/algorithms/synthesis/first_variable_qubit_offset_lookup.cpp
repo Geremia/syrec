@@ -37,19 +37,12 @@ bool FirstVariableQubitOffsetLookup::registerOrUpdateOffsetToFirstQubitOfVariabl
     return true;
 }
 
-std::optional<qc::Qubit> FirstVariableQubitOffsetLookup::getOffsetToFirstQubitOfVariableInCurrentScope(const std::string_view& variableIdentifier, const bool alsoSearchInParentScope) const {
+std::optional<qc::Qubit> FirstVariableQubitOffsetLookup::getOffsetToFirstQubitOfVariableInCurrentScope(const std::string_view& variableIdentifier) const {
     if (variableIdentifier.empty() || recordedOffsetsToFirstQubitPerVariableScopes.empty()) {
         return std::nullopt;
     }
 
-    std::optional<qc::Qubit> foundOffsetForVariableIdentifier = getOffsetToFirstQubitOfVariableInScope(variableIdentifier, recordedOffsetsToFirstQubitPerVariableScopes.back());
-    if (!foundOffsetForVariableIdentifier.has_value() && alsoSearchInParentScope && recordedOffsetsToFirstQubitPerVariableScopes.size() > 1) {
-        foundOffsetForVariableIdentifier = getOffsetToFirstQubitOfVariableInScope(variableIdentifier, recordedOffsetsToFirstQubitPerVariableScopes.at(recordedOffsetsToFirstQubitPerVariableScopes.size() - 2));
-    }
-    return foundOffsetForVariableIdentifier;
-}
-
-std::optional<qc::Qubit> FirstVariableQubitOffsetLookup::getOffsetToFirstQubitOfVariableInScope(const std::string_view& variableIdentifier, const QubitOffsetScope& scope) {
-    const auto& registrationForVariableIdentifier = scope.find(variableIdentifier);
-    return registrationForVariableIdentifier != scope.cend() ? std::make_optional(registrationForVariableIdentifier->second) : std::nullopt;
+    const QubitOffsetScope& lastOpenedQubitOffsetScope        = recordedOffsetsToFirstQubitPerVariableScopes.back();
+    const auto&             registrationForVariableIdentifier = lastOpenedQubitOffsetScope.find(variableIdentifier);
+    return registrationForVariableIdentifier != lastOpenedQubitOffsetScope.cend() ? std::make_optional(registrationForVariableIdentifier->second) : std::nullopt;
 }
