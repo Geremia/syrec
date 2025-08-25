@@ -127,7 +127,7 @@ Call-/UncallStatements
 - A *CallStatement* will execute the referenced module starting from the first statement up to and including the last statement defined in its module body while an *UncallStatement* will perform an execution in the reverse direction with both semantics being inherited from the predecessor language of SyReC (see Janus :footcite:p:`yokoyama2007janus`).
 - Recursive module calls are allowed but it is the responsibility of the developer of the SyReC program to prevent an infinite recursion. However, calls to the implicitly or explicitly defined main module of the SyReC program are not allowed.
 
- .. note::
+.. note::
   Recursive calls to overloads of the implicitly defined main module are possible as long as the last module of the SyReC program is not called.
 
   .. code-block:: text
@@ -144,6 +144,24 @@ Call-/UncallStatements
     call add(tmp_1, tmp_2, tmp_3); // Call OK -> module add(in a(4), ...) called
     c.0:4 ^= tmp_3;
     call add(a, b, c) // Call NOK -> implicit main module called
+
+.. attention::
+  Take care when defining conditional recursive calls since contrary to compiled/interpreted programming languages the recursive calls still needs to be synthesized despite the guard condition not evaluating to true. An example for an infinite recursive is shown in the following example:
+
+  .. code-block:: text
+
+    module recIncrToTwo(inout a(2))
+      if (a < 2) then
+        ++= a;
+        call recIncrToTwo(a)
+      else
+        skip
+      fi (a < 2)
+
+    module main(inout a(2))
+      call recIncrToTwo(a)
+
+  The guard condition might evaluate to false after two calls of the module *recIncrToTwo* were inlined but the statements of the true-branch of the *IfStatement* still need to be synthesized thus resulting in an infinite recursion.
 
 - While the SyReC parser allows a variable to be used multiple times as a caller argument in a *Call/UncallStatement*, it is for now the responsibility of the user to prevent non-reversible assignments in the called module. An example of such an invalid access is shown in the following example:
 

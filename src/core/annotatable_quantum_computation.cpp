@@ -113,9 +113,8 @@ std::optional<qc::Qubit> AnnotatableQuantumComputation::addNonAncillaryQubit(con
         return std::nullopt;
     }
 
-    const auto            qubitIndex = static_cast<qc::Qubit>(getNqubits());
     constexpr std::size_t qubitSize  = 1;
-    addQubitRegister(qubitSize, qubitLabel);
+    const auto            qubitIndex = addQubitRegister(qubitSize, qubitLabel).getStartIndex();
     if (isGarbageQubit) {
         setLogicalQubitGarbage(qubitIndex);
     }
@@ -130,10 +129,9 @@ std::optional<qc::Qubit> AnnotatableQuantumComputation::addPreliminaryAncillaryQ
     if (!canQubitsBeAddedToQuantumComputation || qubitLabel.empty() || getQuantumRegisters().count(qubitLabel) != 0 || inlinedQubitsInformationLookup.count(qubitLabel) != 0 || inliningInformation.userDeclaredQubitLabel.has_value() || (inliningInformation.inlineStack.has_value() && isInlineStackNotSetOrEmpty(inliningInformation.inlineStack.value()))) {
         return std::nullopt;
     }
-    const auto            qubitIndex = static_cast<qc::Qubit>(getNqubits());
-    constexpr std::size_t qubitSize  = 1;
 
-    addQubitRegister(qubitSize, qubitLabel);
+    constexpr std::size_t qubitSize  = 1;
+    const auto            qubitIndex = addQubitRegister(qubitSize, qubitLabel).getStartIndex();
     addedAncillaryQubitIndices.emplace(qubitIndex);
     inlinedQubitsInformationLookup[qubitLabel] = inliningInformation;
 

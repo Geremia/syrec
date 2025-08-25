@@ -27,18 +27,11 @@ namespace syrec {
         dimensions(std::move(dimensions)),
         bitwidth(bitwidth) {}
 
-    void Variable::setReference(Variable::ptr updatedReference) {
-        reference = std::move(updatedReference);
-    }
-
     void VariableAccess::setVar(Variable::ptr v) {
         var = std::move(v);
     }
 
     Variable::ptr VariableAccess::getVar() const {
-        if (var != nullptr && var->reference) {
-            return var->reference;
-        }
         return var;
     }
 
