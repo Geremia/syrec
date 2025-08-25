@@ -73,13 +73,10 @@ namespace syrec {
 
         Variable(Type type, std::string name, std::vector<unsigned> dimensions, unsigned bitwidth);
 
-        void setReference(Variable::ptr updatedReference);
-
         Type                  type;
         std::string           name;
         std::vector<unsigned> dimensions;
         unsigned              bitwidth;
-        Variable::ptr         reference;
     };
 
     /**
