@@ -27,8 +27,8 @@ namespace syrec {
         dimensions(std::move(dimensions)),
         bitwidth(bitwidth) {}
 
-    void VariableAccess::setVar(Variable::ptr var) {
-        this->var = std::move(var);
+    void VariableAccess::setVar(Variable::ptr v) {
+        var = std::move(v);
     }
 
     Variable::ptr VariableAccess::getVar() const {

@@ -96,9 +96,9 @@ namespace syrec {
         /**
        * @brief Sets the variable of this access
        *
-       * @param var Variable
+       * @param v Variable
        */
-        void setVar(Variable::ptr var);
+        void setVar(Variable::ptr v);
 
         /**
        * @brief Returns the variable of this access
