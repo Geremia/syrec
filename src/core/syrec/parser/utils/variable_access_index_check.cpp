@@ -29,9 +29,8 @@ namespace {
 } // namespace
 
 bool VariableAccessIndicesValidity::isValid() const {
-    return std::all_of(
-                   accessedValuePerDimensionValidity.cbegin(),
-                   accessedValuePerDimensionValidity.cend(),
+    return std::ranges::all_of(
+                   accessedValuePerDimensionValidity,
                    [](const IndexValidationResult& validityOfAccessedValueOfDimension) {
                        return validityOfAccessedValueOfDimension.indexValidity == IndexValidationResult::IndexValidity::Ok;
                    }) &&
@@ -100,6 +99,6 @@ std::optional<VariableAccessIndicesValidity> utils::validateVariableAccessIndice
         }
         bitRangeEndValidity.indexValue = evaluatedBitRangeEnd;
     }
-    validityOfVariableAccessIndices.bitRangeAccessValidity = VariableAccessIndicesValidity::BitRangeValidityResult({bitRangeStartValidity, bitRangeEndValidity});
+    validityOfVariableAccessIndices.bitRangeAccessValidity = VariableAccessIndicesValidity::BitRangeValidityResult({.bitRangeStartValidity = bitRangeStartValidity, .bitRangeEndValidity = bitRangeEndValidity});
     return validityOfVariableAccessIndices;
 }

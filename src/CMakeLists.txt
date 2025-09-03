@@ -6,8 +6,6 @@
 #
 # Licensed under the MIT License
 
-set(MQT_SYREC_TARGET_NAME "mqt-syrec")
-
 if(NOT TARGET ${MQT_SYREC_TARGET_NAME}-ir)
   add_library(${MQT_SYREC_TARGET_NAME}-ir)
   target_sources(
@@ -25,7 +23,7 @@ if(NOT TARGET ${MQT_SYREC_TARGET_NAME}-ir)
                                                             MQT::ProjectOptions)
 
   add_library(MQT::SyReC-IR ALIAS ${MQT_SYREC_TARGET_NAME}-ir)
-  target_compile_features(${MQT_SYREC_TARGET_NAME}-ir PUBLIC cxx_std_17)
+  target_compile_features(${MQT_SYREC_TARGET_NAME}-ir PUBLIC cxx_std_20)
 endif()
 
 if(NOT TARGET ${MQT_SYREC_TARGET_NAME}-antlr-parser)
@@ -54,7 +52,7 @@ if(NOT TARGET ${MQT_SYREC_TARGET_NAME}-antlr-parser)
   target_link_libraries(
     ${MQT_SYREC_TARGET_NAME}-antlr-parser
     PUBLIC ${MQT_SYREC_TARGET_NAME}-ir
-    PRIVATE MQT::ProjectWarnings MQT::ProjectOptions fmt::fmt)
+    PRIVATE MQT::ProjectWarnings MQT::ProjectOptions)
 
   if(ANTLR4_BUILD_AS_STATIC_LIBRARY)
     target_link_libraries(${MQT_SYREC_TARGET_NAME}-antlr-parser PRIVATE antlr4_static)
@@ -124,8 +122,4 @@ if(NOT TARGET ${MQT_SYREC_TARGET_NAME}-synthesis)
     PRIVATE MQT::ProjectWarnings MQT::ProjectOptions)
 
   add_library(MQT::SyReC-Synthesis ALIAS ${MQT_SYREC_TARGET_NAME}-synthesis)
-endif()
-
-if(BUILD_MQT_SYREC_BINDINGS)
-  add_subdirectory(python)
 endif()

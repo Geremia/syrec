@@ -14,6 +14,8 @@ project(
   LANGUAGES C CXX
   DESCRIPTION "MQT SyReC Synthesizer: A Tool for HDL-based Synthesis of Reversible Circuits")
 
+set(CMAKE_OSX_DEPLOYMENT_TARGET "13.3")
+
 option(BUILD_MQT_SYREC_BINDINGS "Build the MQT SYREC Python bindings" OFF)
 if(BUILD_MQT_SYREC_BINDINGS)
   # ensure that the BINDINGS option is set
@@ -58,8 +60,15 @@ include(cmake/ExternalDependencies.cmake)
 # set the include directory for the build tree
 set(MQT_SYREC_INCLUDE_BUILD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
+# set prefix for all MQT SyReC targets
+set(MQT_SYREC_TARGET_NAME mqt-syrec)
+
 # add main library code
 add_subdirectory(src)
+
+if(BUILD_MQT_SYREC_BINDINGS)
+  add_subdirectory(bindings)
+endif()
 
 # add test code
 if(BUILD_MQT_SYREC_TESTS)

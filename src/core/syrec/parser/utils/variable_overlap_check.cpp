@@ -40,7 +40,7 @@ namespace {
     }
 
     bool doReferenceVariablesMatch(const syrec::Variable& lVarReference, const syrec::Variable& rVarReference) noexcept {
-        return lVarReference.name == rVarReference.name && lVarReference.bitwidth == rVarReference.bitwidth && std::equal(lVarReference.dimensions.cbegin(), lVarReference.dimensions.cend(), rVarReference.dimensions.cbegin(), rVarReference.dimensions.cend());
+        return lVarReference.name == rVarReference.name && lVarReference.bitwidth == rVarReference.bitwidth && std::ranges::equal(lVarReference.dimensions, rVarReference.dimensions);
     }
 } // namespace
 
@@ -189,6 +189,6 @@ std::string VariableAccessOverlapCheckResult::stringifyOverlappingIndicesInforma
     }
 
     auto overlapCheckResultContainer                          = VariableAccessOverlapCheckResult(VariableAccessOverlapCheckResult::OverlapState::Overlapping);
-    overlapCheckResultContainer.overlappingIndicesInformation = VariableAccessOverlapCheckResult::OverlappingIndicesContainer({constantIndicesOfAccessedValuesPerDimension, *overlappingBit});
+    overlapCheckResultContainer.overlappingIndicesInformation = VariableAccessOverlapCheckResult::OverlappingIndicesContainer({.knownValueOfAccessedValuePerDimension = constantIndicesOfAccessedValuesPerDimension, .overlappingBit = *overlappingBit});
     return overlapCheckResultContainer;
 }

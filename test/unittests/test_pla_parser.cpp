@@ -9,8 +9,10 @@
  */
 
 #include "core/io/pla_parser.hpp"
+#include "core/truthTable/truth_table.hpp"
 
-#include "gtest/gtest.h"
+#include <gtest/gtest.h>
+#include <string>
 
 using namespace syrec;
 
@@ -21,12 +23,12 @@ protected:
 
     TruthTable::Cube::Value emptyVal;
 
-    TruthTable::Cube c11{};
+    TruthTable::Cube c11;
 
-    TruthTable::Cube c1{};
+    TruthTable::Cube c1;
 
-    TruthTable::Cube cOneDc{};
-    TruthTable::Cube cDcOne{};
+    TruthTable::Cube cOneDc;
+    TruthTable::Cube cDcOne;
 
     void SetUp() override {
         c11 = TruthTable::Cube::fromInteger(0b11U, 2U);
@@ -42,7 +44,7 @@ protected:
 };
 
 TEST_F(PlaParserTest, andTest) {
-    std::string circAnd = testCircuitsDir + "and.pla";
+    const std::string circAnd = testCircuitsDir + "and.pla";
 
     EXPECT_TRUE(readPla(testPla, circAnd));
 
@@ -57,7 +59,7 @@ TEST_F(PlaParserTest, andTest) {
 }
 
 TEST_F(PlaParserTest, orTest) {
-    std::string circOr = testCircuitsDir + "or.pla";
+    const std::string circOr = testCircuitsDir + "or.pla";
 
     EXPECT_TRUE(readPla(testPla, circOr));
 

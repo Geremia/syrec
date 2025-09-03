@@ -10,8 +10,8 @@
 
 #include "core/syrec/program.hpp"
 
-#include "gtest/gtest.h"
 #include <algorithm>
+#include <gtest/gtest.h>
 #include <string>
 
 using namespace syrec;
@@ -56,7 +56,7 @@ INSTANTIATE_TEST_SUITE_P(SyrecParserTest, SyrecParserTest,
                                  "swap_2"),
                          [](const testing::TestParamInfo<SyrecParserTest::ParamType>& info) {
                              auto s = info.param;
-                             std::replace( s.begin(), s.end(), '-', '_');
+                             std::ranges::replace(s, '-', '_');
                              return s; });
 
 TEST_P(SyrecParserTest, GenericParserTest) {

@@ -31,6 +31,7 @@
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <regex>
 #include <stack>
 #include <string>
@@ -69,7 +70,7 @@ namespace syrec {
     bool SyrecSynthesis::addVariables(const Variable::vec& variables) const {
         // We only want to record inlining information for qubits that are actually inlined (i.e. variables of type 'wire' and 'state').
         // Note that all variables added in this call shared the same inlining stack thus we reuse the latter when adding the former.
-        const bool                                   isAnyVarALocalModuleVarBasedOnVarType = std::any_of(variables.cbegin(), variables.cend(), [](const Variable::ptr& variable) { return variable->type == Variable::Type::Wire || variable->type == Variable::Type::State; });
+        const bool                                   isAnyVarALocalModuleVarBasedOnVarType = std::ranges::any_of(variables, [](const Variable::ptr& variable) { return variable->type == Variable::Type::Wire || variable->type == Variable::Type::State; });
         const std::optional<QubitInliningStack::ptr> inlineStack                           = isAnyVarALocalModuleVarBasedOnVarType ? getLastCreatedModuleCallStackInstance() : std::nullopt;
         bool                                         couldQubitsForVariablesBeAdded        = shouldQubitInlineInformationBeRecorded() && isAnyVarALocalModuleVarBasedOnVarType ? inlineStack.has_value() : true;
 
@@ -132,7 +133,7 @@ namespace syrec {
                 std::cerr << "There can be at most one module named '" << *expectedMainModuleIdentifier << "' that shall be used as the entry point of the SyReC program\n";
                 return false;
             }
-            const auto& lastModuleMatchingIdentifier = std::find_if(programModules.crbegin(), programModules.crend(), [&expectedMainModuleIdentifier](const Module::ptr& programModule) { return programModule->name == *expectedMainModuleIdentifier; });
+            const auto& lastModuleMatchingIdentifier = std::ranges::find_if(std::ranges::reverse_view(programModules), [&expectedMainModuleIdentifier](const Module::ptr& programModule) { return programModule->name == *expectedMainModuleIdentifier; });
             if (lastModuleMatchingIdentifier == programModules.crend()) {
                 std::cerr << "If the expected main module identifier is defined using the synthesis settings ('" << *expectedMainModuleIdentifier << "') then there must be at least one module matching the defined identifier\n";
                 return false;
@@ -216,8 +217,8 @@ namespace syrec {
         std::vector checkLhsVec(expLhsVector.cbegin(), expLhsVector.cend());
         std::vector checkRhsVec(expRhsVector.cbegin(), expRhsVector.cend());
 
-        checkLhsVec.erase(std::remove_if(checkLhsVec.begin(), checkLhsVec.end(), [](const std::vector<qc::Qubit>& linesContainer) { return linesContainer.empty(); }), checkLhsVec.end());
-        checkRhsVec.erase(std::remove_if(checkRhsVec.begin(), checkRhsVec.end(), [](const std::vector<qc::Qubit>& linesContainer) { return linesContainer.empty(); }), checkRhsVec.end());
+        std::erase_if(checkLhsVec, [](const std::vector<qc::Qubit>& linesContainer) { return linesContainer.empty(); });
+        std::erase_if(checkRhsVec, [](const std::vector<qc::Qubit>& linesContainer) { return linesContainer.empty(); });
 
         bool foundRepeat = false;
         for (std::size_t i = 0; i < checkRhsVec.size() && !foundRepeat; ++i) {
@@ -276,7 +277,7 @@ namespace syrec {
                     if (auto* lastPushedEntryOnInlineStack = copyOfLastCreatedQubitInlineStack->getStackEntryAt(lastCreatedQubitInlineStack.value()->size() - 1); lastPushedEntryOnInlineStack != nullptr) {
                         lastPushedEntryOnInlineStack->lineNumberOfCallOfTargetModule    = statement->lineNumber;
                         lastPushedEntryOnInlineStack->isTargetModuleAccessedViaCallStmt = true;
-                        okay                                                            = copyOfLastCreatedQubitInlineStack->push(QubitInliningStack::QubitInliningStackEntry({std::nullopt, std::nullopt, callStat->target})) && onStatement(*callStat);
+                        okay                                                            = copyOfLastCreatedQubitInlineStack->push(QubitInliningStack::QubitInliningStackEntry({.lineNumberOfCallOfTargetModule = std::nullopt, .isTargetModuleAccessedViaCallStmt = std::nullopt, .targetModule = callStat->target})) && onStatement(*callStat);
                     } else {
                         // There must be at least one entry on the stack for the main module of the currently synthesized SyReC program
                         okay = false;
@@ -298,7 +299,7 @@ namespace syrec {
                     if (auto* lastPushedEntryOnInlineStack = copyOfLastCreatedQubitInlineStack->getStackEntryAt(lastCreatedQubitInlineStack.value()->size() - 1); lastPushedEntryOnInlineStack != nullptr) {
                         lastPushedEntryOnInlineStack->lineNumberOfCallOfTargetModule    = statement->lineNumber;
                         lastPushedEntryOnInlineStack->isTargetModuleAccessedViaCallStmt = false;
-                        okay                                                            = copyOfLastCreatedQubitInlineStack->push(QubitInliningStack::QubitInliningStackEntry({std::nullopt, std::nullopt, uncallStat->target})) && onStatement(*uncallStat);
+                        okay                                                            = copyOfLastCreatedQubitInlineStack->push(QubitInliningStack::QubitInliningStackEntry({.lineNumberOfCallOfTargetModule = std::nullopt, .isTargetModuleAccessedViaCallStmt = std::nullopt, .targetModule = uncallStat->target})) && onStatement(*uncallStat);
                     } else {
                         // There must be at least one entry on the stack for the main module of the currently synthesized SyReC program
                         okay = false;
@@ -417,12 +418,12 @@ namespace syrec {
         // add new helper line
         const qc::Qubit guardExpressionQubit = guardExpressionQubits.front();
         annotatableQuantumComputation.activateControlQubitPropagationScope();
-        bool synthesisOfBranchStatementsOk = annotatableQuantumComputation.registerControlQubitForPropagationInCurrentAndNestedScopes(guardExpressionQubit) && std::all_of(statement.thenStatements.cbegin(), statement.thenStatements.cend(), [&](const Statement::ptr& trueBranchStatement) { return processStatement(trueBranchStatement); });
+        bool synthesisOfBranchStatementsOk = annotatableQuantumComputation.registerControlQubitForPropagationInCurrentAndNestedScopes(guardExpressionQubit) && std::ranges::all_of(statement.thenStatements, [&](const Statement::ptr& trueBranchStatement) { return processStatement(trueBranchStatement); });
 
         // Toggle helper line.
         // We do not want to use the current helper line controlling the conditional execution of the statements
         // of both branches of the current IfStatement when negating the value of said helper line
-        synthesisOfBranchStatementsOk &= annotatableQuantumComputation.deregisterControlQubitFromPropagationInCurrentScope(guardExpressionQubit) && annotatableQuantumComputation.addOperationsImplementingNotGate(guardExpressionQubit) && annotatableQuantumComputation.registerControlQubitForPropagationInCurrentAndNestedScopes(guardExpressionQubit) && std::all_of(statement.elseStatements.cbegin(), statement.elseStatements.cend(), [&](const Statement::ptr& falseBranchStatement) { return processStatement(falseBranchStatement); });
+        synthesisOfBranchStatementsOk &= annotatableQuantumComputation.deregisterControlQubitFromPropagationInCurrentScope(guardExpressionQubit) && annotatableQuantumComputation.addOperationsImplementingNotGate(guardExpressionQubit) && annotatableQuantumComputation.registerControlQubitForPropagationInCurrentAndNestedScopes(guardExpressionQubit) && std::ranges::all_of(statement.elseStatements, [&](const Statement::ptr& falseBranchStatement) { return processStatement(falseBranchStatement); });
 
         // We do not want to use the current helper line controlling the conditional execution of the statements
         // of both branches of the current IfStatement when negating the value of said helper line
@@ -456,7 +457,7 @@ namespace syrec {
         }
 
         else if (from > to) {
-            for (auto i = static_cast<int>(from); i >= static_cast<int>(to); i -= static_cast<int>(step)) {
+            for (auto i = static_cast<int>(from); std::cmp_greater_equal(i, to); i -= static_cast<int>(step)) {
                 // adjust loop variable if necessary
 
                 if (!loopVariable.empty()) {
@@ -813,9 +814,9 @@ namespace syrec {
         // The aggregate variable V is a 'virtual' 2*N qubit variable that stores the combination of the remainder and quotient qubits in the form
         // R_(N-1), R_(N-2), ..., R_1, R_0, Q_(N-1), Q_(N-2), ..., Q_1, Q_0
         std::vector<qc::Qubit> aggregateOfRemainderAndQuotientQubits(operandBitwidth * 2, 0);
-        std::copy(quotient.cbegin(), quotient.cend(), aggregateOfRemainderAndQuotientQubits.begin());
-        std::copy(remainder.cbegin(), remainder.cend(), aggregateOfRemainderAndQuotientQubits.begin() + static_cast<std::ptrdiff_t>(operandBitwidth));
-        std::reverse(aggregateOfRemainderAndQuotientQubits.begin(), aggregateOfRemainderAndQuotientQubits.end());
+        std::ranges::copy(quotient, aggregateOfRemainderAndQuotientQubits.begin());
+        std::ranges::copy(remainder, aggregateOfRemainderAndQuotientQubits.begin() + static_cast<std::ptrdiff_t>(operandBitwidth));
+        std::ranges::reverse(aggregateOfRemainderAndQuotientQubits);
 
         annotatableQuantumComputation.activateControlQubitPropagationScope();
         for (std::size_t i = 1; i <= operandBitwidth && synthesisOk; ++i) {
@@ -824,7 +825,7 @@ namespace syrec {
 
             // Since the operand for the subtraction and addition operation are expected to be in little endian qubit order (i.e. least significant qubit at index 0, ... , most significant qubit at index N - 1)
             // and our aggregate register stores the qubits in big endian qubit order, a reversal of the aggregate variable V needs to be performed after the shift was performed
-            std::reverse(truncatedAggregateOfRemainderAndQuotientQubits.begin(), truncatedAggregateOfRemainderAndQuotientQubits.end());
+            std::ranges::reverse(truncatedAggregateOfRemainderAndQuotientQubits);
 
             // The carry out bit of the subtraction operation is used to determine whether the resulting difference was < 0.
             const qc::Qubit signBitOfSubtraction = remainder[operandBitwidth - i];
@@ -1054,7 +1055,7 @@ namespace syrec {
         const std::size_t numDeclaredDimensionsOfVariable = referencedVariable.dimensions.size();
         if (!variableAccess->indexes.empty()) {
             // check if it is all numeric_expressions
-            if (static_cast<std::size_t>(std::count_if(variableAccess->indexes.cbegin(), variableAccess->indexes.cend(), [&](const auto& p) { return dynamic_cast<NumericExpression*>(p.get()); })) == numDeclaredDimensionsOfVariable) {
+            if (std::cmp_equal(std::count_if(variableAccess->indexes.cbegin(), variableAccess->indexes.cend(), [&](const auto& p) { return dynamic_cast<NumericExpression*>(p.get()); }), numDeclaredDimensionsOfVariable)) {
                 for (std::size_t i = 0U; i < numDeclaredDimensionsOfVariable; ++i) {
                     const auto evaluatedDimensionIndexValue = dynamic_cast<NumericExpression*>(variableAccess->indexes.at(i).get())->value->evaluate(loopMap);
                     qc::Qubit  aggregateValue               = evaluatedDimensionIndexValue;
@@ -1077,7 +1078,7 @@ namespace syrec {
                     lines.emplace_back(offsetToFirstQubitOfVariable + i);
                 }
             } else {
-                for (auto i = static_cast<int>(first); i >= static_cast<int>(second); --i) {
+                for (auto i = static_cast<int>(first); std::cmp_greater_equal(i, second); --i) {
                     lines.emplace_back(offsetToFirstQubitOfVariable + static_cast<qc::Qubit>(i));
                 }
             }
@@ -1335,7 +1336,7 @@ namespace syrec {
         const StatementExecutionOrderStack::StatementExecutionOrder currentAggregateExecutionOrderState = statementExecutionOrderStack->addStatementExecutionOrderToAggregateState(executionOrderToAddToAggregateState);
 
         if (currentAggregateExecutionOrderState == StatementExecutionOrderStack::StatementExecutionOrder::Sequential) {
-            synthesisOfModuleBodyOk = std::all_of(statements.cbegin(), statements.cend(), [&](const Statement::ptr& stmt) { return processStatement(stmt); });
+            synthesisOfModuleBodyOk = std::ranges::all_of(statements, [&](const Statement::ptr& stmt) { return processStatement(stmt); });
         } else {
             for (auto it = statements.rbegin(); it != statements.rend() && synthesisOfModuleBodyOk; ++it) {
                 if (const auto& reverseStatement = (*it)->reverse(); reverseStatement.has_value()) {

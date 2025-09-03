@@ -21,7 +21,7 @@
 
 #include <charconv>
 #include <cstdlib>
-#include <fmt/format.h>
+#include <format>
 #include <memory>
 #include <optional>
 #include <string>
@@ -85,9 +85,7 @@ namespace syrec_parser {
             const std::size_t numTrailingWhitespaces = viewOfStringifiedConstantValue.find_last_not_of(' ');
             viewOfStringifiedConstantValue.remove_suffix(viewOfStringifiedConstantValue.size() - (numTrailingWhitespaces != std::string::npos ? (numTrailingWhitespaces + 1) : viewOfStringifiedConstantValue.size()));
 
-            unsigned int constantValue = 0;
-            // Instead of using std::stroul to deserialize an integer from a string (which requires a null-terminated string) we use the C++17 std::from_chars call usable with a std::string_view input and better error handling
-            // in case of overflows or non-numeric characters being included in the input string
+            unsigned int constantValue                                 = 0;
             auto [pointerToLastNonNumericCharacterInString, errorCode] = std::from_chars(viewOfStringifiedConstantValue.data(), viewOfStringifiedConstantValue.data() + viewOfStringifiedConstantValue.size(), constantValue);
             if (errorCode == std::errc::result_out_of_range || errorCode == std::errc::invalid_argument) {
                 if (didDeserializationFailDueToOverflow != nullptr && errorCode == std::errc::result_out_of_range) {
@@ -152,14 +150,7 @@ namespace syrec_parser {
             static_assert(!getIdentifierForSemanticError<semanticError>().empty(), "No identifiers for semantic error found!");
 
             constexpr std::string_view identifierForSemanticError = getIdentifierForSemanticError<semanticError>();
-            // An informal requirement for the C++ code of the mqt-syrec library is to strongly discourage explicitly throwing exceptions to not degrage the performance of the library.
-            // Thus the parser will record syntax as well as semantic errors in a STL container in the form of std::string messages create via the {fmt} library. We do make use of the
-            // compile time checks provided by the {fmt} library to perform type-safety checks between the specified messages templates parameter types and the user-provided arguments,
-            // but cannot guarantee that no exception is thrown during the conversion process of the user-provided arguments (i.e. for a datetime, etc.). Currently we are only using
-            // std::string and other primitive types in the message templates (and thus no exception should be thrown here [if the prior stringification from a custom type to std::string succeeds]).
-            // We recommend to also use the approach in the future in which the user must at first 'stringify'/transform his custom-types to corresponding std::string/primitive or any of the other
-            // supported types supported by {fmt} (https://fmt.dev/11.1/api/#standard-library-types-formatting).
-            sharedGeneratedMessageContainerInstance->recordMessage(std::make_unique<Message>(Message::Type::Error, std::string(identifierForSemanticError), messagePosition, fmt::format(FMT_STRING(getFormatForSemanticErrorMessage<semanticError>()), std::forward<T>(args)...)));
+            sharedGeneratedMessageContainerInstance->recordMessage(std::make_unique<Message>(Message::Type::Error, std::string(identifierForSemanticError), messagePosition, std::format(getFormatForSemanticErrorMessage<semanticError>(), std::forward<T>(args)...)));
         }
 
         /**
@@ -177,13 +168,6 @@ namespace syrec_parser {
             static_assert(!getIdentifierForSemanticError<semanticError>().empty(), "No identifiers for semantic error found!");
 
             constexpr std::string_view identifierForSemanticError = getIdentifierForSemanticError<semanticError>();
-            // An informal requirement for the C++ code of the mqt-syrec library is to strongly discourage explicitly throwing exceptions to not degrage the performance of the library.
-            // Thus the parser will record syntax as well as semantic errors in a STL container in the form of std::string messages create via the {fmt} library. We do make use of the
-            // compile time checks provided by the {fmt} library to perform type-safety checks between the specified messages templates parameter types and the user-provided arguments,
-            // but cannot guarantee that no exception is thrown during the conversion process of the user-provided arguments (i.e. for a datetime, etc.). Currently we are only using
-            // std::string and other primitive types in the message templates (and thus no exception should be thrown here [if the prior stringification from a custom type to std::string succeeds]).
-            // We recommend to also use the approach in the future in which the user must at first 'stringify'/transform his custom-types to corresponding std::string/primitive or any of the other
-            // supported types supported by {fmt} (https://fmt.dev/11.1/api/#standard-library-types-formatting).
             sharedGeneratedMessageContainerInstance->recordMessage(std::make_unique<Message>(Message::Type::Error, std::string(identifierForSemanticError), messagePosition, std::string(getFormatForSemanticErrorMessage<semanticError>())));
         }
 

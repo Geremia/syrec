@@ -16,6 +16,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <numeric>
 #include <unordered_map>
 #include <unordered_set>
@@ -61,7 +62,7 @@ namespace minbool {
                                nBits);
         }
         for (auto& [first, second]: columns) {
-            std::sort(second.begin(), second.end());
+            std::ranges::sort(second, std::less{});
         }
     }
 
@@ -115,14 +116,15 @@ namespace minbool {
     bool PrimeChart::simplify() {
         bool change = false;
 
-        for (const auto& [pair1First, pair1Second]: columns) {
-            for (const auto& [pair2First, pair2Second]: columns) {
+        for (auto& [pair1First, pair1Second]: columns) {
+            for (auto& [pair2First, pair2Second]: columns) {
                 if (pair1First == pair2First) {
                     continue;
                 }
                 // Dominating columns are eliminated
-                if (std::includes(pair2Second.begin(), pair2Second.end(),
-                                  pair1Second.begin(), pair1Second.end())) {
+                std::ranges::sort(pair1Second, std::less{});
+                std::ranges::sort(pair2Second, std::less{});
+                if (std::ranges::includes(pair2Second, pair1Second, std::less{})) {
                     columns.erase(pair2First);
                     change = true;
                     break;
@@ -138,7 +140,7 @@ namespace minbool {
             second.clear();
         }
         for (auto& [first, second]: rows) {
-            std::sort(second.begin(), second.end());
+            std::ranges::sort(second);
         }
 
         for (const auto& [pair1First, pair1Second]: rows) {
@@ -147,8 +149,7 @@ namespace minbool {
                     continue;
                 }
                 // Dominated rows are eliminated
-                if (std::includes(pair1Second.begin(), pair1Second.end(),
-                                  pair2Second.begin(), pair2Second.end())) {
+                if (std::ranges::includes(pair1Second, pair2Second)) {
                     rows.erase(pair2First);
                     change = true;
                     break;
@@ -163,7 +164,7 @@ namespace minbool {
             }
         }
         for (auto& [first, second]: columns) {
-            std::sort(second.begin(), second.end());
+            std::ranges::sort(second, std::less{});
         }
 
         return change;
@@ -178,8 +179,8 @@ namespace minbool {
             terms.clear();
             table.combine(terms);
             // Remove duplicates
-            std::sort(terms.begin(), terms.end());
-            terms.erase(std::unique(terms.begin(), terms.end()), terms.end());
+            std::ranges::sort(terms, std::less{});
+            terms.erase(std::ranges::unique(terms).begin(), terms.end());
             table.primes(primes);
         }
         return primes;
@@ -211,11 +212,11 @@ namespace minbool {
             }
         }
         for (std::uint64_t i = (1 << n) - 1; i > 0U; --i) {
-            if (onValues.count(i) == 0 && evalBoolean(solution, i, n)) {
+            if (!onValues.contains(i) && evalBoolean(solution, i, n)) {
                 return false;
             }
         }
-        return onValues.count(0) != 0U || !evalBoolean(solution, 0U, n);
+        return onValues.contains(0) || !evalBoolean(solution, 0U, n);
     }
 
     syrec::TruthTable::Cube::Set minimizeBoolean(syrec::TruthTable::Cube::Set const& sigVec) {

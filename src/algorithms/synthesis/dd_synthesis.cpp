@@ -260,7 +260,7 @@ namespace syrec {
 
     auto DDSynthesizer::completeUniCubes(TruthTable::Cube::Set const& p1SigVec, TruthTable::Cube::Set const& p2SigVec, TruthTable::Cube::Set& uniqueCubeVec) -> void {
         for (const auto& p2Cube: p2SigVec) {
-            if (const auto it = std::find(p1SigVec.begin(), p1SigVec.end(), p2Cube); it == p1SigVec.end()) {
+            if (const auto it = std::ranges::find(p1SigVec, p2Cube); it == p1SigVec.end()) {
                 uniqueCubeVec.emplace(p2Cube);
             }
         }
@@ -294,7 +294,7 @@ namespace syrec {
     auto DDSynthesizer::dcNodeCondition(dd::mEdge const& current) -> bool {
         if (!current.isTerminal()) {
             // If all successors point to the same node with the same weight, this node can be ignored.
-            return std::all_of(current.p->e.begin(), current.p->e.end(), [&current](const auto& e) { return e == current.p->e[0]; });
+            return std::ranges::all_of(current.p->e, [&current](const auto& e) { return e == current.p->e[0]; });
         }
         return false;
     }
@@ -411,7 +411,7 @@ namespace syrec {
         assert(!current.isTerminal());
         TruthTable::Cube repeatedCube;
         for (auto const& p2Obj: p2SigVec) {
-            if (const auto it = std::find(p1SigVec.begin(), p1SigVec.end(), p2Obj); it != p1SigVec.end()) {
+            if (const auto it = std::ranges::find(p1SigVec, p2Obj); it != p1SigVec.end()) {
                 repeatedCube = p2Obj;
             }
         }
@@ -587,7 +587,7 @@ namespace syrec {
 
         // to preserve the `src` DD throughout the synthesis, its reference count has to be at least 2.
         const auto& rootSet = dd->getRootSet<dd::mNode>();
-        if (rootSet.find(src) == rootSet.end()) {
+        if (!rootSet.contains(src)) {
             dd->incRef(src);
             dd->incRef(src);
         } else if (rootSet.at(src) == 1U) {
@@ -648,7 +648,7 @@ namespace syrec {
 
             // if no paths have been shifted, the children of the current node need to be processed.
             for (const auto& e: current.p->e) {
-                if (!e.isTerminal() && !dcNodeCondition(e) && visited.find(e) == visited.end()) {
+                if (!e.isTerminal() && !dcNodeCondition(e) && !visited.contains(e)) {
                     queue.emplace(e);
                     visited.emplace(e);
                 }

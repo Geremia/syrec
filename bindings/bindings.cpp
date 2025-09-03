@@ -11,23 +11,30 @@
 #include "algorithms/simulation/simple_simulation.hpp"
 #include "algorithms/synthesis/syrec_cost_aware_synthesis.hpp"
 #include "algorithms/synthesis/syrec_line_aware_synthesis.hpp"
+#include "algorithms/synthesis/syrec_synthesis.hpp"
 #include "core/annotatable_quantum_computation.hpp"
+#include "core/n_bit_values_container.hpp"
 #include "core/properties.hpp"
 #include "core/qubit_inlining_stack.hpp"
 #include "core/syrec/parser/utils/syrec_operation_utils.hpp"
 #include "core/syrec/program.hpp"
 #include "ir/QuantumComputation.hpp"
 
-#include <functional>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <optional>
+#include <pybind11/cast.h>
 #include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
+#include <pybind11/pytypes.h>
+#include <pybind11/stl.h> // NOLINT(misc-include-cleaner)
+#include <string>
 
 namespace py = pybind11;
 using namespace pybind11::literals;
 using namespace syrec;
 
-PYBIND11_MODULE(pysyrec, m) {
+PYBIND11_MODULE(MQT_SYREC_MODULE_NAME, m, py::mod_gil_not_used()) { // NOLINT(misc-include-cleaner)
     py::module::import("mqt.core.ir");
     m.doc() = "Python interface for the SyReC programming language for the synthesis of reversible circuits";
 
@@ -40,7 +47,7 @@ PYBIND11_MODULE(pysyrec, m) {
     py::class_<QubitInliningStack, std::shared_ptr<QubitInliningStack>>(m, "qubit_inlining_stack")
             .def(py::init<>(), "Constructs an empty qubit inlining stack")
             .def("size", &QubitInliningStack::size, "Get the number of stack entries")
-            .def("__getitem__", &QubitInliningStack::getStackEntryAt, "idx"_a, py::return_value_policy::reference_internal);
+            .def("__getitem__", &QubitInliningStack::getStackEntryAt, "idx"_a, py::return_value_policy::reference_internal); // NOLINT(misc-include-cleaner)
 
     py::class_<AnnotatableQuantumComputation::InlinedQubitInformation>(m, "inlined_qubit_information")
             .def(py::init<>(), "Constructs an empty inline qubit information container")
@@ -61,8 +68,8 @@ PYBIND11_MODULE(pysyrec, m) {
             .def(py::init<std::size_t, uint64_t>(), "n"_a, "initialLineValues"_a, "Constructs a container of size n from an integer initialLineValues")
             .def("__getitem__", [](const NBitValuesContainer& nBitValuesContainer, std::size_t bitIndex) { return nBitValuesContainer[bitIndex]; })
             .def("test", &NBitValuesContainer::test, "n"_a, "Determine the value of the bit at position n")
-            .def("set", py::overload_cast<std::size_t>(&NBitValuesContainer::set), "n"_a, "Set the value of the bit at position n to TRUE")
-            .def("set", py::overload_cast<std::size_t, bool>(&NBitValuesContainer::set), "n"_a, "value"_a, "Set the bit at position n to a specific value")
+            .def("set", py::overload_cast<std::size_t>(&NBitValuesContainer::set), "n"_a, "Set the value of the bit at position n to TRUE")                 // NOLINT(misc-include-cleaner)
+            .def("set", py::overload_cast<std::size_t, bool>(&NBitValuesContainer::set), "n"_a, "value"_a, "Set the bit at position n to a specific value") // NOLINT(misc-include-cleaner)
             .def("reset", &NBitValuesContainer::reset, "n"_a, "Set the value of the bit at position n to FALSE")
             .def("resize", &NBitValuesContainer::resize, "n"_a, "Changes the number of bits stored in the container")
             .def("size", &NBitValuesContainer::size, "Get the number of values stored in the container")
@@ -80,9 +87,9 @@ PYBIND11_MODULE(pysyrec, m) {
             .def("set_int", &Properties::set<int>)
             .def("set_unsigned", &Properties::set<unsigned>)
             .def("set_double", &Properties::set<double>)
-            .def("get_string", py::overload_cast<const std::string&>(&Properties::get<std::string>, py::const_))
-            .def("get_double", py::overload_cast<const std::string&>(&Properties::get<double>, py::const_))
-            .def("get_bool", py::overload_cast<const std::string&>(&Properties::get<bool>, py::const_))
+            .def("get_string", py::overload_cast<const std::string&>(&Properties::get<std::string>, py::const_)) // NOLINT(misc-include-cleaner)
+            .def("get_double", py::overload_cast<const std::string&>(&Properties::get<double>, py::const_))      // NOLINT(misc-include-cleaner)
+            .def("get_bool", py::overload_cast<const std::string&>(&Properties::get<bool>, py::const_))          // NOLINT(misc-include-cleaner)
             .def("contains", &Properties::containsKey, "key"_a, "Determine whether a matching entry for the given key exists")
             .def("remove", &Properties::remove, "key"_a, "Removes the entry matching the given key");
 

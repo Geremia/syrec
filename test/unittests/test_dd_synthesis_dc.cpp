@@ -10,10 +10,13 @@
 
 #include "algorithms/simulation/circuit_to_truthtable.hpp"
 #include "algorithms/synthesis/dd_synthesis.hpp"
-#include "algorithms/synthesis/encoding.hpp"
 #include "core/io/pla_parser.hpp"
+#include "core/truthTable/truth_table.hpp"
 
-#include "gtest/gtest.h"
+#include <algorithm>
+#include <gtest/gtest.h>
+#include <iostream>
+#include <string>
 
 using namespace qc::literals;
 using namespace syrec;
@@ -61,7 +64,7 @@ INSTANTIATE_TEST_SUITE_P(TestDDSynth, TestDDSynthDc,
                                  "z4ml"),
                          [](const testing::TestParamInfo<TestDDSynthDc::ParamType>& info) {
                              auto s = info.param;
-                             std::replace( s.begin(), s.end(), '-', '_');
+                             std::ranges::replace(s, '-', '_');
                              return s; });
 
 TEST_P(TestDDSynthDc, GenericDDSynthesisDcTest) {

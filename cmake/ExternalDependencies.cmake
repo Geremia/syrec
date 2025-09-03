@@ -41,11 +41,11 @@ if(BUILD_MQT_SYREC_BINDINGS)
 endif()
 
 # cmake-format: off
-set(MQT_CORE_MINIMUM_VERSION 3.1.0
+set(MQT_CORE_MINIMUM_VERSION 3.2.1
     CACHE STRING "MQT Core minimum version")
-set(MQT_CORE_VERSION 3.1.0
+set(MQT_CORE_VERSION 3.2.1
     CACHE STRING "MQT Core version")
-set(MQT_CORE_REV "1f95d92320b116497d6f516a085fbe3bb8693960"
+set(MQT_CORE_REV "0425f88169f573e4505b49703c4cadf3699ccbcd"
     CACHE STRING "MQT Core identifier (tag, branch or commit hash)")
 set(MQT_CORE_REPO_OWNER "cda-tum"
 	CACHE STRING "MQT Core repository owner (change when using a fork)")
@@ -68,16 +68,6 @@ if(BUILD_MQT_SYREC_TESTS)
   FetchContent_Declare(googletest URL ${GTEST_URL} FIND_PACKAGE_ARGS ${GTEST_VERSION} NAMES GTest)
   list(APPEND FETCH_PACKAGES googletest)
 endif()
-
-set(FMT_VERSION
-    11.2.0
-    CACHE STRING "FMT library version")
-
-FetchContent_Declare(
-  fmt
-  GIT_REPOSITORY https://github.com/fmtlib/fmt.git
-  GIT_TAG ${FMT_VERSION})
-list(APPEND FETCH_PACKAGES fmt)
 
 # The original CMake configuration in the ANTLR C++ git repository
 # (https://github.com/antlr/antlr4/blob/master/runtime/Cpp/cmake/ExternalAntlr4Cpp.cmake) uses the

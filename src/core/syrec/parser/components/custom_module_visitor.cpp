@@ -142,7 +142,7 @@ std::optional<syrec::Module::ptr> CustomModuleVisitor::visitModuleTyped(const TS
         if (moduleIdentifier == mainModuleIdentifier && symbolTable->existsModuleForName(*moduleIdentifier)) {
             recordSemanticError<SemanticError::DuplicateMainModuleDefinition>(mapTokenPositionToMessagePosition(*context->literalIdent()->getSymbol()), *moduleIdentifier);
         }
-        if (moduleIdentifier->rfind(RESERVED_IDENTIFIER_PREFIX, 0) == 0) {
+        if (moduleIdentifier->starts_with(RESERVED_IDENTIFIER_PREFIX)) {
             recordSemanticError<SemanticError::ReservedIdentifierPrefixUsed>(mapTokenPositionToMessagePosition(*context->literalIdent()->getSymbol()), *moduleIdentifier, RESERVED_IDENTIFIER_PREFIX);
         }
     }
@@ -259,7 +259,7 @@ std::optional<syrec::Variable::ptr> CustomModuleVisitor::visitSignalDeclarationT
     const std::optional<utils::TemporaryVariableScope::ptr> activeSymbolTableScope = symbolTable->getActiveTemporaryScope();
     const std::optional<std::string>                        variableIdentifier     = context->literalIdent() != nullptr ? std::make_optional(context->literalIdent()->getText()) : std::nullopt;
     if (variableIdentifier.has_value()) {
-        if (variableIdentifier->rfind(RESERVED_IDENTIFIER_PREFIX, 0) == 0) {
+        if (variableIdentifier->starts_with(RESERVED_IDENTIFIER_PREFIX)) {
             recordSemanticError<SemanticError::ReservedIdentifierPrefixUsed>(mapTokenPositionToMessagePosition(*context->literalIdent()->getSymbol()), *variableIdentifier, RESERVED_IDENTIFIER_PREFIX);
         }
         if (activeSymbolTableScope.has_value() && activeSymbolTableScope->get()->existsVariableForName(*variableIdentifier)) {
@@ -352,15 +352,13 @@ std::optional<std::vector<syrec::Statement::ptr>> CustomModuleVisitor::visitStat
 }
 
 bool CustomModuleVisitor::doVariablesMatch(const syrec::Variable& lVariable, const syrec::Variable& rVariable) {
-    return lVariable.name == rVariable.name && std::equal(lVariable.dimensions.cbegin(), lVariable.dimensions.cend(), rVariable.dimensions.cbegin(), rVariable.dimensions.cend()) && lVariable.bitwidth == rVariable.bitwidth;
+    return lVariable.name == rVariable.name && std::ranges::equal(lVariable.dimensions, rVariable.dimensions) && lVariable.bitwidth == rVariable.bitwidth;
 }
 
 bool CustomModuleVisitor::doVariableCollectionsMatch(const syrec::Variable::vec& lVariableCollection, const syrec::Variable::vec& rVariableCollection) {
-    return std::equal(
-            lVariableCollection.cbegin(),
-            lVariableCollection.cend(),
-            rVariableCollection.cbegin(),
-            rVariableCollection.cend(),
+    return std::ranges::equal(
+            lVariableCollection,
+            rVariableCollection,
             [](const syrec::Variable::ptr& lVariable, const syrec::Variable::ptr& rVariable) {
                 return lVariable && rVariable && doVariablesMatch(*lVariable, *rVariable);
             });

@@ -27,7 +27,7 @@ void ParserMessagesContainer::recordMessage(std::unique_ptr<Message> message) {
 }
 
 std::vector<Message::ptr> ParserMessagesContainer::getMessagesOfType(Message::Type messageType) const {
-    return messagesPerType.count(messageType) > 0 ? messagesPerType.at(messageType) : std::vector<Message::ptr>();
+    return messagesPerType.contains(messageType) ? messagesPerType.at(messageType) : std::vector<Message::ptr>();
 }
 
 bool ParserMessagesContainer::setFilterForToBeRecordedMessages(const std::string& messageIdToPassFilter) {
@@ -44,12 +44,12 @@ void ParserMessagesContainer::clearFilterForToBeRecordedMessages() {
 }
 
 void ParserMessagesContainer::sortRecordedMessagesOfTypeInAscendingOrder(Message::Type messageType) {
-    if (messagesPerType.count(messageType) == 0) {
+    if (!messagesPerType.contains(messageType)) {
         return;
     }
 
     std::vector<Message::ptr>& messagesOfType = messagesPerType[messageType];
-    std::stable_sort(messagesOfType.begin(), messagesOfType.end(), [](const Message::ptr& lMsg, const Message::ptr& rMsg) {
+    std::ranges::stable_sort(messagesOfType, [](const Message::ptr& lMsg, const Message::ptr& rMsg) {
         return lMsg->position.line < rMsg->position.line ? true : (lMsg->position.line == rMsg->position.line && lMsg->position.column < rMsg->position.column);
     });
 }

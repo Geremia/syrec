@@ -9,8 +9,9 @@
 
 ci:
   autoupdate_commit_msg: "⬆️🪝 update pre-commit hooks"
-  autofix_commit_msg: "🎨 pre-commit fixes"
   autoupdate_schedule: quarterly
+  autofix_commit_msg: "🎨 pre-commit fixes"
+  skip: [mypy]
 
 repos:
   # Standard hooks
@@ -105,7 +106,7 @@ repos:
     rev: v1.17.1
     hooks:
       - id: mypy
-        files: ^(src/mqt|test/python|noxfile.py)
+        files: ^(python/mqt|test/python|noxfile.py)
         args: []
         additional_dependencies:
           - nox
