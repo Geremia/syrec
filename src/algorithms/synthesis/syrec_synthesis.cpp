@@ -17,6 +17,8 @@
 #include "core/properties.hpp"
 #include "core/qubit_inlining_stack.hpp"
 #include "core/syrec/expression.hpp"
+#include "core/syrec/number.hpp"
+#include "core/syrec/parser/utils/syrec_operation_utils.hpp"
 #include "core/syrec/program.hpp"
 #include "core/syrec/statement.hpp"
 #include "core/syrec/variable.hpp"
@@ -24,12 +26,15 @@
 #include "ir/operations/Control.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cassert>
 #include <chrono>
 #include <cstddef>
+#include <functional>
 #include <iostream>
 #include <iterator>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <ranges>
 #include <regex>
@@ -48,7 +53,67 @@ namespace {
     using TimeStamp = std::chrono::time_point<std::chrono::steady_clock>;
 
     [[nodiscard]] bool isMoreThanOneModuleMatchingIdentifierDeclared(const syrec::Module::vec& modulesToCheck, const std::string_view& moduleIdentifierToFind) {
-        return std::count_if(modulesToCheck.cbegin(), modulesToCheck.cend(), [moduleIdentifierToFind](const syrec::Module::ptr& moduleToCheck) { return moduleToCheck->name == moduleIdentifierToFind; }) > 1;
+        return std::ranges::count_if(modulesToCheck, [moduleIdentifierToFind](const syrec::Module::ptr& moduleToCheck) { return moduleToCheck->name == moduleIdentifierToFind; }) > 1;
+    }
+
+    [[nodiscard]] std::optional<std::vector<bool>> convertIntegerToBinary(const std::size_t resultBitwidth, unsigned integerToConvert) {
+        if (resultBitwidth == 0) {
+            return std::nullopt;
+        }
+
+        std::vector resultContainer(resultBitwidth, false);
+        for (std::size_t i = 0; i < resultBitwidth; ++i) {
+            resultContainer[i] = static_cast<bool>(integerToConvert % 2);
+            integerToConvert >>= 1;
+        }
+        return resultContainer;
+    }
+
+    [[nodiscard]] bool moveIntegerValueToAncillaryQubits(syrec::AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<qc::Qubit>& ancillaryQubitIndices, const unsigned integerValue) {
+        bool synthesisOk = false;
+        if (const std::optional<std::vector<bool>> generatedBitsOfIntegerValue = convertIntegerToBinary(ancillaryQubitIndices.size(), integerValue); generatedBitsOfIntegerValue.has_value()) {
+            synthesisOk                            = true;
+            const std::vector<bool>& bitsOfInteger = *generatedBitsOfIntegerValue;
+            for (std::size_t i = 0; i < ancillaryQubitIndices.size() && synthesisOk; ++i) {
+                if (bitsOfInteger[i]) {
+                    synthesisOk = annotatableQuantumComputation.addOperationsImplementingNotGate(ancillaryQubitIndices[i]);
+                }
+            }
+        }
+        return synthesisOk;
+    }
+
+    [[nodiscard]] bool clearIntegerValueFromAncillaryQubits(syrec::AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<qc::Qubit>& ancillaryQubitIndices, const unsigned integerValue) {
+        // Since we are assuming that the ancillary qubits currently storing the value of the integer were initially set to zero, we can simply apply
+        // the same gate sequence that was used to move the integer value to the ancillaries to reset the latter.
+        return moveIntegerValueToAncillaryQubits(annotatableQuantumComputation, ancillaryQubitIndices, integerValue);
+    }
+
+    [[nodiscard]] bool checkIfQubitsMatchAndStoreResultInRhsOperandQubits(syrec::AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<qc::Qubit>& lhsOperand, const std::vector<qc::Qubit>& rhsOperand, bool clearResultFromRhsOperand = false) {
+        if (lhsOperand.size() != rhsOperand.size()) {
+            std::cerr << "Can only compare two qubit sequences if they contained the same number of qubits, lhs operand contained: " << std::to_string(lhsOperand.size()) << " qubits while the rhs operand contained " << std::to_string(rhsOperand.size()) << "\n";
+            return false;
+        }
+        bool synthesisOk = true;
+        if (!clearResultFromRhsOperand) {
+            for (std::size_t i = 0; i < lhsOperand.size() && synthesisOk; ++i) {
+                synthesisOk = annotatableQuantumComputation.addOperationsImplementingCnotGate(lhsOperand.at(i), rhsOperand.at(i)) && annotatableQuantumComputation.addOperationsImplementingNotGate(rhsOperand.at(i));
+            }
+        } else {
+            for (std::size_t i = 0; i < lhsOperand.size() && synthesisOk; ++i) {
+                synthesisOk = annotatableQuantumComputation.addOperationsImplementingNotGate(rhsOperand.at(i)) &&
+                              annotatableQuantumComputation.addOperationsImplementingCnotGate(lhsOperand.at(i), rhsOperand.at(i));
+            }
+        }
+        return synthesisOk;
+    }
+
+    [[nodiscard]] unsigned determineNumberOfElementsInVariable(const syrec::Variable& variableAccess) {
+        return std::accumulate(variableAccess.dimensions.cbegin(), variableAccess.dimensions.cend(), 1U, std::multiplies());
+    }
+
+    [[nodiscard]] unsigned determineNumberOfBitsRequiredToStoreValue(const unsigned value) {
+        return static_cast<unsigned>(std::bit_width(value));
     }
 } // namespace
 
@@ -320,65 +385,221 @@ namespace syrec {
         return okay;
     }
 
+    // If both variable accesses of the SwapStatement contained only expressions evaluable at compile time in its dimension access component
+    // then the accessed qubits of the both variables can be determined a compile time and the procedure below can be ignored for the synthesis of the swap statement.
+    //
+    // Otherwise, the following steps need to be performed for both parts of the swap statement (the same procedure with small changes is also used for the synthesis of Unary- and AssignStatements):
+    // However, instead of two potential cases (a variable access with non-compile time constant expressions [CTCEs] and one without) we have to consider four different cases
+    // The four different cases are:
+    //   I.   Both operands of the SwapStatement contained only compile time constant expressions in the accessed variable parts.
+    //   II.  The left hand operand of the SwapStatement contained only both CTCEs and non-CTCEs while the right hand side operand contained only CTCEs.
+    //   III. The left hand operand of the SwapStatement contained only CTCEs while the right hand side operand contained both CTCEs and non-CTCEs.
+    //   IV.  Both operands of the SwapStatement contained both CTCEs and non-CTCEs in their accessed variable parts.
+    // and need to update the procedure below accordingly.
+    //
+    // The procedure applied for the cases II-II involves the following steps:
+    // I.   Calculate the index of the accessed index in the unrolled variable and store the value in ancillary qubits (note that the calculated value is not available at compile time).
+    // II.  Iterate through all possible index values and compare them to the index calculated in I. Use the result of this operation as control qubits to perform a conditional swap of the
+    //      qubits at the current index in the accessed variable. A swap needs to be performed since the assignment needs to update the qubits that store the current value of the accessed element and not on the
+    //      current value itself. Note that for a variable access containing non-compile time constant expressions in its dimension access component that is used as an operand in an expression it is sufficient
+    //      to copy the value of the qubits of the accessed element of the variable to the ancillary qubits storing the "extracted" qubits of the variable since we are only interesting in the value of the qubits of
+    //      the accessed element and not the qubits themself.
+    //
+    //      module main(inout a[2][3](2)) wire b(2)
+    //        a[b][0] += (a[(b + 1)][0] + 2)
+    //      In this example it is sufficient to determine the value of the qubits accessed by a[(b + 1)][0] to synthesize the expression on the right hand side of the expression while to correctly update the value of the
+    //      qubits of a[b][0] the assignment operation '+=' needs to operate on the qubits of a[b][0] and not only the value of a[b][0].
+    //
+    // III. After the accessed qubits of both variable were determined, perform the synthesis of the swap operation.
+    // IV.  Swap the qubits storing the accessed qubits of the variables back to the qubits of the accessed element in the variable for both operands of the swap operation.
     bool SyrecSynthesis::onStatement(const SwapStatement& statement) {
-        std::vector<qc::Qubit> lhs;
-        std::vector<qc::Qubit> rhs;
+        const std::optional<EvaluatedVariableAccess> evaluatedLhsOperand = evaluateAndValidateVariableAccess(statement.lhs, loopMap, firstVariableQubitOffsetLookup);
+        const std::optional<EvaluatedVariableAccess> evaluatedRhsOperand = evaluateAndValidateVariableAccess(statement.rhs, loopMap, firstVariableQubitOffsetLookup);
+        if (!evaluatedLhsOperand.has_value() || !evaluatedRhsOperand.has_value()) {
+            return false;
+        }
 
-        const bool synthesisOk = getVariables(statement.lhs, lhs) && getVariables(statement.rhs, rhs);
-        assert(lhs.size() == rhs.size());
-        return synthesisOk && swap(annotatableQuantumComputation, lhs, rhs);
+        const EvaluatedVariableAccess& dataOfEvaluatedLhsOperand = *evaluatedLhsOperand;
+        const EvaluatedVariableAccess& dataOfEvaluatedRhsOperand = *evaluatedRhsOperand;
+
+        const std::size_t     aggregateOfWhetherOperandsContainedOnlyNumericExpressions                = static_cast<std::size_t>(dataOfEvaluatedLhsOperand.evaluatedDimensionAccess.containedOnlyNumericExpressions) + (static_cast<std::size_t>(dataOfEvaluatedRhsOperand.evaluatedDimensionAccess.containedOnlyNumericExpressions) << 2);
+        constexpr std::size_t onlyLhsOperandContainedCompileTimeConstantExpressionsInDimensionAccess   = 1U;
+        constexpr std::size_t onlyRhsOperandContainedCompileTimeConstantExpressionsInDimensionAccess   = 4U;
+        constexpr std::size_t noOperandContainedOnlyCompileTimeConstantExpressionsInDimensionAccess    = 0U;
+        constexpr std::size_t bothOperandsContainedOnlyCompileTimeConstantExpressionsInDimensionAccess = 5U;
+
+        bool           synthesisOk      = true;
+        const unsigned numQubitsSwapped = static_cast<unsigned>(dataOfEvaluatedLhsOperand.evaluatedBitrangeAccess.getIndicesOfAccessedBits().size());
+        switch (aggregateOfWhetherOperandsContainedOnlyNumericExpressions) {
+            case bothOperandsContainedOnlyCompileTimeConstantExpressionsInDimensionAccess: {
+                std::vector<qc::Qubit> qubitsOfLhsOperand;
+                std::vector<qc::Qubit> qubitsOfRhsOperand;
+                synthesisOk = getQubitsForVariableAccessContainingOnlyIndicesEvaluableAtCompileTime(dataOfEvaluatedLhsOperand, qubitsOfLhsOperand) && getQubitsForVariableAccessContainingOnlyIndicesEvaluableAtCompileTime(dataOfEvaluatedRhsOperand, qubitsOfRhsOperand) && swap(annotatableQuantumComputation, qubitsOfLhsOperand, qubitsOfRhsOperand);
+                break;
+            }
+            case onlyRhsOperandContainedCompileTimeConstantExpressionsInDimensionAccess: {
+                std::vector<qc::Qubit> qubitsStoringUnrolledIndexOfLhsOperand;
+                std::vector<qc::Qubit> qubitsOfRhsOperand;
+                synthesisOk = calculateSymbolicUnrolledIndexForElementInVariable(dataOfEvaluatedLhsOperand, qubitsStoringUnrolledIndexOfLhsOperand);
+
+                std::vector<qc::Qubit> containerStoringExtractedQubitsOfLhsOperand;
+                synthesisOk &= getConstantLines(numQubitsSwapped, 0U, containerStoringExtractedQubitsOfLhsOperand) && transferQubitsOfElementAtIndexInVariableToOtherQubits(dataOfEvaluatedLhsOperand, qubitsStoringUnrolledIndexOfLhsOperand, containerStoringExtractedQubitsOfLhsOperand, QubitTransferOperation::SwapQubits) && getQubitsForVariableAccessContainingOnlyIndicesEvaluableAtCompileTime(dataOfEvaluatedRhsOperand, qubitsOfRhsOperand) && swap(annotatableQuantumComputation, containerStoringExtractedQubitsOfLhsOperand, qubitsOfRhsOperand) && transferQubitsOfElementAtIndexInVariableToOtherQubits(dataOfEvaluatedLhsOperand, qubitsStoringUnrolledIndexOfLhsOperand, containerStoringExtractedQubitsOfLhsOperand, QubitTransferOperation::SwapQubits);
+                break;
+            }
+            case onlyLhsOperandContainedCompileTimeConstantExpressionsInDimensionAccess: {
+                std::vector<qc::Qubit> qubitsOfLhsOperand;
+                synthesisOk = getQubitsForVariableAccessContainingOnlyIndicesEvaluableAtCompileTime(dataOfEvaluatedLhsOperand, qubitsOfLhsOperand);
+
+                std::vector<qc::Qubit> qubitsStoringUnrolledIndexOfRhsOperand;
+                synthesisOk &= calculateSymbolicUnrolledIndexForElementInVariable(dataOfEvaluatedRhsOperand, qubitsStoringUnrolledIndexOfRhsOperand);
+
+                std::vector<qc::Qubit> containerStoringExtractedQubitsOfRhsOperand;
+                synthesisOk &= getConstantLines(numQubitsSwapped, 0U, containerStoringExtractedQubitsOfRhsOperand) && transferQubitsOfElementAtIndexInVariableToOtherQubits(dataOfEvaluatedRhsOperand, qubitsStoringUnrolledIndexOfRhsOperand, containerStoringExtractedQubitsOfRhsOperand, QubitTransferOperation::SwapQubits) && swap(annotatableQuantumComputation, qubitsOfLhsOperand, containerStoringExtractedQubitsOfRhsOperand) && transferQubitsOfElementAtIndexInVariableToOtherQubits(dataOfEvaluatedRhsOperand, qubitsStoringUnrolledIndexOfRhsOperand, containerStoringExtractedQubitsOfRhsOperand, QubitTransferOperation::SwapQubits);
+                break;
+            }
+            case noOperandContainedOnlyCompileTimeConstantExpressionsInDimensionAccess: {
+                std::vector<qc::Qubit> qubitsStoringUnrolledIndexOfLhsOperand;
+                synthesisOk = calculateSymbolicUnrolledIndexForElementInVariable(dataOfEvaluatedLhsOperand, qubitsStoringUnrolledIndexOfLhsOperand);
+
+                std::vector<qc::Qubit> containerStoringExtractedQubitsOfLhsOperand;
+                synthesisOk &= getConstantLines(numQubitsSwapped, 0U, containerStoringExtractedQubitsOfLhsOperand) && transferQubitsOfElementAtIndexInVariableToOtherQubits(dataOfEvaluatedLhsOperand, qubitsStoringUnrolledIndexOfLhsOperand, containerStoringExtractedQubitsOfLhsOperand, QubitTransferOperation::SwapQubits);
+
+                std::vector<qc::Qubit> qubitsStoringUnrolledIndexOfRhsOperand;
+                synthesisOk &= calculateSymbolicUnrolledIndexForElementInVariable(dataOfEvaluatedRhsOperand, qubitsStoringUnrolledIndexOfRhsOperand);
+
+                std::vector<qc::Qubit> containerStoringExtractedQubitsOfRhsOperand;
+                synthesisOk &= getConstantLines(numQubitsSwapped, 0U, containerStoringExtractedQubitsOfRhsOperand) && transferQubitsOfElementAtIndexInVariableToOtherQubits(dataOfEvaluatedRhsOperand, qubitsStoringUnrolledIndexOfRhsOperand, containerStoringExtractedQubitsOfRhsOperand, QubitTransferOperation::SwapQubits);
+
+                synthesisOk &= swap(annotatableQuantumComputation, containerStoringExtractedQubitsOfLhsOperand, containerStoringExtractedQubitsOfRhsOperand) && transferQubitsOfElementAtIndexInVariableToOtherQubits(dataOfEvaluatedLhsOperand, qubitsStoringUnrolledIndexOfLhsOperand, containerStoringExtractedQubitsOfLhsOperand, QubitTransferOperation::SwapQubits) && transferQubitsOfElementAtIndexInVariableToOtherQubits(dataOfEvaluatedRhsOperand, qubitsStoringUnrolledIndexOfRhsOperand, containerStoringExtractedQubitsOfRhsOperand, QubitTransferOperation::SwapQubits);
+                break;
+            }
+            default:
+                return false;
+        }
+        return synthesisOk;
     }
 
     bool SyrecSynthesis::onStatement(const UnaryStatement& statement) {
-        // load variable
-        std::vector<qc::Qubit> var;
-        bool                   synthesisOk = getVariables(statement.var, var);
+        const std::optional<EvaluatedVariableAccess> evaluatedVariableAccess = evaluateAndValidateVariableAccess(statement.var, loopMap, firstVariableQubitOffsetLookup);
+        if (!evaluatedVariableAccess.has_value()) {
+            return false;
+        }
 
+        bool                           synthesisOk                   = true;
+        const EvaluatedVariableAccess& dataOfEvaluatedVariableAccess = *evaluatedVariableAccess;
+        const unsigned                 numAccessedQubits             = static_cast<unsigned>(dataOfEvaluatedVariableAccess.evaluatedBitrangeAccess.getIndicesOfAccessedBits().size());
+
+        // If the variable access defining the assigned to variable parts of the UnaryStatement contains only expressions evaluable at compile time in its dimension access component
+        // then the accessed qubits of the variable can be determined a compile time and the procedure below can be ignored for the synthesis of the assignment.
+        //
+        // Otherwise, the following steps need to be performed and are almost identical to the ones performed for a syrec::AssignStatement with the difference that for an syrec::UnaryStatement no extra expression needs to be handled:
+        // I.   Calculate the index of the accessed index in the unrolled variable and store the value in ancillary qubits (note that the calculated value is not available at compile time).
+        // II.  Iterate through all possible index values and compare them to the index calculated in I. Use the result of this operation as control qubits to perform a conditional swap of the
+        //      qubits at the current index in the accessed variable. A swap needs to be performed since the assignment needs to update the qubits that store the current value of the accessed element and not on the
+        //      current value itself. Note that for a variable access containing non-compile time constant expressions in its dimension access component that is used as an operand in an expression it is sufficient
+        //      to copy the value of the qubits of the accessed element of the variable to the ancillary qubits storing the "extracted" qubits of the variable since we are only interesting in the value of the qubits of
+        //      the accessed element and not the qubits themself.
+        //
+        //      module main(inout a[2][3](2)) wire b(2)
+        //        a[b][0] += (a[(b + 1)][0] + 2)
+        //      In this example it is sufficient to determine the value of the qubits accessed by a[(b + 1)][0] to synthesize the expression on the right hand side of the expression while to correctly update the value of the
+        //      qubits of a[b][0] the assignment operation '+=' needs to operate on the qubits of a[b][0] and not only the value of a[b][0].
+        //
+        // III. Perform the synthesis of the assignment operation.
+        // IV.  Swap the qubits storing the result of the assignment back to the qubits of the accessed element in the variable.
+        std::vector<qc::Qubit> qubitsStoringUnrolledIndex;
+        std::vector<qc::Qubit> qubitsStoringAccessedValueOfVariable;
+        if (dataOfEvaluatedVariableAccess.evaluatedDimensionAccess.containedOnlyNumericExpressions) {
+            synthesisOk = getQubitsForVariableAccessContainingOnlyIndicesEvaluableAtCompileTime(dataOfEvaluatedVariableAccess, qubitsStoringAccessedValueOfVariable);
+        } else {
+            synthesisOk = calculateSymbolicUnrolledIndexForElementInVariable(dataOfEvaluatedVariableAccess, qubitsStoringUnrolledIndex) && getConstantLines(numAccessedQubits, 0U, qubitsStoringAccessedValueOfVariable) && transferQubitsOfElementAtIndexInVariableToOtherQubits(dataOfEvaluatedVariableAccess, qubitsStoringUnrolledIndex, qubitsStoringAccessedValueOfVariable, QubitTransferOperation::SwapQubits);
+        }
         switch (statement.unaryOperation) {
             case UnaryStatement::UnaryOperation::Invert:
-                synthesisOk &= bitwiseNegation(annotatableQuantumComputation, var);
+                synthesisOk &= bitwiseNegation(annotatableQuantumComputation, qubitsStoringAccessedValueOfVariable);
                 break;
             case UnaryStatement::UnaryOperation::Increment:
-                synthesisOk &= increment(annotatableQuantumComputation, var);
+                synthesisOk &= increment(annotatableQuantumComputation, qubitsStoringAccessedValueOfVariable);
                 break;
             case UnaryStatement::UnaryOperation::Decrement:
-                synthesisOk &= decrement(annotatableQuantumComputation, var);
+                synthesisOk &= decrement(annotatableQuantumComputation, qubitsStoringAccessedValueOfVariable);
                 break;
             default:
                 synthesisOk = false;
                 break;
         }
+
+        if (synthesisOk && !dataOfEvaluatedVariableAccess.evaluatedDimensionAccess.containedOnlyNumericExpressions) {
+            synthesisOk &= transferQubitsOfElementAtIndexInVariableToOtherQubits(dataOfEvaluatedVariableAccess, qubitsStoringUnrolledIndex, qubitsStoringAccessedValueOfVariable, QubitTransferOperation::SwapQubits);
+        }
         return synthesisOk;
     }
 
     bool SyrecSynthesis::onStatement(const AssignStatement& statement) {
-        std::vector<qc::Qubit> lhs;
-        std::vector<qc::Qubit> rhs;
-        std::vector<qc::Qubit> d;
+        const std::optional<EvaluatedVariableAccess> evaluatedLhsOperand = evaluateAndValidateVariableAccess(statement.lhs, loopMap, firstVariableQubitOffsetLookup);
+        if (!evaluatedLhsOperand.has_value()) {
+            return false;
+        }
 
-        bool synthesisOfAssignmentOk = getVariables(statement.lhs, lhs);
+        bool                           synthesisOfAssignmentOk   = true;
+        const EvaluatedVariableAccess& dataOfEvaluatedLhsOperand = evaluatedLhsOperand.value();
+        std::vector<qc::Qubit>         qubitsStoringIndexInUnrolledVariable;
+        std::vector<qc::Qubit>         qubitsStoringSelectedValueOfVariable;
+
+        // If the variable access on the left hand side of the assignment contains only expressions evaluable at compile time in its dimension access component
+        // then the accessed qubits of the variable can be determined a compile time and the procedure below can be ignored for the synthesis of the assignment.
+        //
+        // Otherwise, the following steps need to be performed.
+        // I.   Calculate the index of the accessed index in the unrolled variable and store the value in ancillary qubits (note that the calculated value is not available at compile time).
+        // II.  Iterate through all possible index values and compare them to the index calculated in I. Use the result of this operation as control qubits to perform a conditional swap of the
+        //      qubits at the current index in the accessed variable. A swap needs to be performed since the assignment needs to update the qubits that store the current value of the accessed element and not on the
+        //      current value itself. Note that for a variable access containing non-compile time constant expressions in its dimension access component that is used as an operand in an expression it is sufficient
+        //      to copy the value of the qubits of the accessed element of the variable to the ancillary qubits storing the "extracted" qubits of the variable since we are only interesting in the value of the qubits of
+        //      the accessed element and not the qubits themself.
+        //
+        //      module main(inout a[2][3](2)) wire b(2)
+        //        a[b][0] += (a[(b + 1)][0] + 2)
+        //      In this example it is sufficient to determine the value of the qubits accessed by a[(b + 1)][0] to synthesize the expression on the right hand side of the expression while to correctly update the value of the
+        //      qubits of a[b][0] the assignment operation '+=' needs to operate on the qubits of a[b][0] and not only the value of a[b][0].
+        //
+        // III. Perform the synthesis of the assignment operation.
+        // IV.  Swap the qubits storing the result of the assignment back to the qubits of the accessed element in the variable.
+        if (evaluatedLhsOperand->evaluatedDimensionAccess.containedOnlyNumericExpressions) {
+            synthesisOfAssignmentOk = getQubitsForVariableAccessContainingOnlyIndicesEvaluableAtCompileTime(dataOfEvaluatedLhsOperand, qubitsStoringSelectedValueOfVariable);
+        } else {
+            synthesisOfAssignmentOk &= calculateSymbolicUnrolledIndexForElementInVariable(dataOfEvaluatedLhsOperand, qubitsStoringIndexInUnrolledVariable) && getConstantLines(static_cast<unsigned>(dataOfEvaluatedLhsOperand.evaluatedBitrangeAccess.getIndicesOfAccessedBits().size()), 0U, qubitsStoringSelectedValueOfVariable) && transferQubitsOfElementAtIndexInVariableToOtherQubits(dataOfEvaluatedLhsOperand, qubitsStoringIndexInUnrolledVariable, qubitsStoringSelectedValueOfVariable, QubitTransferOperation::SwapQubits);
+        }
+
         // While a derviced class can fall back to the base class implementation to synthesis AssignStatements, the opRhsLhsExpression(...) call
         // of the derived class might not be able to handle the expression on the right-hand side of the assignment but since we are already using the base class
         // to synthesis the assignment (which should be able to handle all SyReC expression types) the return value of opRhsLhsExpression can be ignored.
+        std::vector<qc::Qubit> d;
         opRhsLhsExpression(statement.rhs, d);
-        synthesisOfAssignmentOk &= SyrecSynthesis::onExpression(statement.rhs, rhs, lhs, statement.assignOperation);
+
+        std::vector<qc::Qubit> rhs;
+        synthesisOfAssignmentOk &= SyrecSynthesis::onExpression(statement.rhs, rhs, qubitsStoringSelectedValueOfVariable, statement.assignOperation);
         opVec.clear();
 
         switch (statement.assignOperation) {
             case AssignStatement::AssignOperation::Add: {
-                synthesisOfAssignmentOk &= assignAdd(lhs, rhs, statement.assignOperation);
+                synthesisOfAssignmentOk &= assignAdd(qubitsStoringSelectedValueOfVariable, rhs, statement.assignOperation);
                 break;
             }
             case AssignStatement::AssignOperation::Subtract: {
-                synthesisOfAssignmentOk &= assignSubtract(lhs, rhs, statement.assignOperation);
+                synthesisOfAssignmentOk &= assignSubtract(qubitsStoringSelectedValueOfVariable, rhs, statement.assignOperation);
                 break;
             }
             case AssignStatement::AssignOperation::Exor: {
-                synthesisOfAssignmentOk &= assignExor(lhs, rhs, statement.assignOperation);
+                synthesisOfAssignmentOk &= assignExor(qubitsStoringSelectedValueOfVariable, rhs, statement.assignOperation);
                 break;
             }
             default:
                 return false;
+        }
+
+        // We need to swap back the value of the ancillary qubits currently storing the result of the assignment statement back to the qubits of the selected qubits of the variable accessed on the left hand side of the assignment.
+        if (synthesisOfAssignmentOk && !dataOfEvaluatedLhsOperand.evaluatedDimensionAccess.containedOnlyNumericExpressions) {
+            synthesisOfAssignmentOk &= transferQubitsOfElementAtIndexInVariableToOtherQubits(dataOfEvaluatedLhsOperand, qubitsStoringIndexInUnrolledVariable, qubitsStoringSelectedValueOfVariable, QubitTransferOperation::SwapQubits);
         }
         return synthesisOfAssignmentOk;
     }
@@ -784,7 +1005,7 @@ namespace syrec {
             synthesisOk = annotatableQuantumComputation.addOperationsImplementingNotGate(dest[i]);
         }
 
-        synthesisOk &= increase(annotatableQuantumComputation, dest, src, carry);
+        synthesisOk &= inplaceAdd(annotatableQuantumComputation, src, dest, carry);
         for (std::size_t i = 0; i < src.size() && synthesisOk; ++i) {
             synthesisOk = annotatableQuantumComputation.addOperationsImplementingNotGate(dest[i]);
         }
@@ -836,7 +1057,7 @@ namespace syrec {
             synthesisOk &= annotatableQuantumComputation.registerControlQubitForPropagationInCurrentAndNestedScopes(signBitOfSubtraction);
 
             // Y = Y + divisor
-            synthesisOk &= increase(annotatableQuantumComputation, truncatedAggregateOfRemainderAndQuotientQubits, divisor) && annotatableQuantumComputation.deregisterControlQubitFromPropagationInCurrentScope(signBitOfSubtraction);
+            synthesisOk &= inplaceAdd(annotatableQuantumComputation, divisor, truncatedAggregateOfRemainderAndQuotientQubits) && annotatableQuantumComputation.deregisterControlQubitFromPropagationInCurrentScope(signBitOfSubtraction);
 
             // After the 'restoring' operation for the variable V was performed, the final value of the remainder qubit can be set (remainder[i] = NOT(sign bit)).
             synthesisOk &= annotatableQuantumComputation.addOperationsImplementingNotGate(signBitOfSubtraction);
@@ -877,7 +1098,7 @@ namespace syrec {
         return lessThan(annotatableQuantumComputation, dest, src1, src2);
     }
 
-    bool SyrecSynthesis::increase(AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<qc::Qubit>& rhs, const std::vector<qc::Qubit>& lhs, const std::optional<qc::Qubit>& optionalCarryOut) {
+    bool SyrecSynthesis::inplaceAdd(AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<qc::Qubit>& lhs, const std::vector<qc::Qubit>& rhs, const std::optional<qc::Qubit>& optionalCarryOut) {
         if (lhs.size() != rhs.size()) {
             return false;
         }
@@ -940,12 +1161,12 @@ namespace syrec {
         return synthesisOk;
     }
 
-    bool SyrecSynthesis::decrease(AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<qc::Qubit>& rhs, const std::vector<qc::Qubit>& lhs) {
+    bool SyrecSynthesis::inplaceSubtract(AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<qc::Qubit>& lhs, const std::vector<qc::Qubit>& rhs) {
         bool synthesisOk = true;
         for (std::size_t i = 0; i < rhs.size() && synthesisOk; ++i) {
             synthesisOk = annotatableQuantumComputation.addOperationsImplementingNotGate(rhs[i]);
         }
-        synthesisOk &= increase(annotatableQuantumComputation, rhs, lhs);
+        synthesisOk &= inplaceAdd(annotatableQuantumComputation, lhs, rhs);
         for (std::size_t i = 0; i < rhs.size() && synthesisOk; ++i) {
             synthesisOk = annotatableQuantumComputation.addOperationsImplementingNotGate(rhs[i]);
         }
@@ -957,7 +1178,7 @@ namespace syrec {
     }
 
     bool SyrecSynthesis::lessThan(AnnotatableQuantumComputation& annotatableQuantumComputation, qc::Qubit dest, const std::vector<qc::Qubit>& src1, const std::vector<qc::Qubit>& src2) {
-        return decreaseWithCarry(annotatableQuantumComputation, src1, src2, dest) && increase(annotatableQuantumComputation, src1, src2);
+        return decreaseWithCarry(annotatableQuantumComputation, src1, src2, dest) && inplaceAdd(annotatableQuantumComputation, src2, src1);
     }
 
     bool SyrecSynthesis::modulo(AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<qc::Qubit>& dividend, const std::vector<qc::Qubit>& divisor, const std::vector<qc::Qubit>& quotient, const std::vector<qc::Qubit>& remainder) {
@@ -982,7 +1203,7 @@ namespace syrec {
         for (std::size_t i = 1; i < dest.size() && synthesisOk; ++i) {
             sum.erase(sum.begin());
             partial.pop_back();
-            synthesisOk = annotatableQuantumComputation.registerControlQubitForPropagationInCurrentAndNestedScopes(src1[i]) && increase(annotatableQuantumComputation, sum, partial) && annotatableQuantumComputation.deregisterControlQubitFromPropagationInCurrentScope(src1[i]);
+            synthesisOk = annotatableQuantumComputation.registerControlQubitForPropagationInCurrentAndNestedScopes(src1[i]) && inplaceAdd(annotatableQuantumComputation, partial, sum) && annotatableQuantumComputation.deregisterControlQubitFromPropagationInCurrentScope(src1[i]);
         }
         annotatableQuantumComputation.deactivateControlQubitPropagationScope();
         return synthesisOk;
@@ -1038,61 +1259,20 @@ namespace syrec {
     }
 
     bool SyrecSynthesis::getVariables(const VariableAccess::ptr& variableAccess, std::vector<qc::Qubit>& lines) {
-        if (variableAccess->var == nullptr) {
-            std::cerr << "Failed to determine qubits for variable access due to referenced variable being null\n";
+        const std::optional<EvaluatedVariableAccess> evaluatedVariableAccess = evaluateAndValidateVariableAccess(variableAccess, loopMap, firstVariableQubitOffsetLookup);
+        if (!evaluatedVariableAccess.has_value()) {
             return false;
         }
 
-        const Variable& referencedVariable           = *variableAccess->var.get();
-        qc::Qubit       offsetToFirstQubitOfVariable = 0;
-        if (const std::optional<qc::Qubit> optionalOffsetToFirstQubitOfVariable = firstVariableQubitOffsetLookup != nullptr ? firstVariableQubitOffsetLookup->getOffsetToFirstQubitOfVariableInCurrentScope(referencedVariable.name) : std::nullopt; optionalOffsetToFirstQubitOfVariable.has_value()) {
-            offsetToFirstQubitOfVariable = *optionalOffsetToFirstQubitOfVariable;
-        } else {
-            std::cerr << "Failed to determine first qubit for variable with identifier " << referencedVariable.name << "\n";
-            return false;
+        // Bitrange and dimension access only contained expressions that could be evaluated at compile time.
+        bool synthesisOfVariableAccessOk = evaluatedVariableAccess->evaluatedDimensionAccess.containedOnlyNumericExpressions ? getQubitsForVariableAccessContainingOnlyIndicesEvaluableAtCompileTime(*evaluatedVariableAccess, lines) : getQubitsForVariableAccessContainingIndicesNotEvaluableAtCompileTime(*evaluatedVariableAccess, lines);
+
+        // Check post condition that any qubit for variable access was fetched
+        if (synthesisOfVariableAccessOk && lines.empty()) {
+            std::cerr << "Failed to determine accessed qubits for variable access on variable with identifier " << variableAccess->var->name << "\n";
+            synthesisOfVariableAccessOk = false;
         }
-
-        const std::size_t numDeclaredDimensionsOfVariable = referencedVariable.dimensions.size();
-        if (!variableAccess->indexes.empty()) {
-            // check if it is all numeric_expressions
-            if (std::cmp_equal(std::count_if(variableAccess->indexes.cbegin(), variableAccess->indexes.cend(), [&](const auto& p) { return dynamic_cast<NumericExpression*>(p.get()); }), numDeclaredDimensionsOfVariable)) {
-                for (std::size_t i = 0U; i < numDeclaredDimensionsOfVariable; ++i) {
-                    const auto evaluatedDimensionIndexValue = dynamic_cast<NumericExpression*>(variableAccess->indexes.at(i).get())->value->evaluate(loopMap);
-                    qc::Qubit  aggregateValue               = evaluatedDimensionIndexValue;
-                    for (std::size_t j = i + 1; j < numDeclaredDimensionsOfVariable; ++j) {
-                        aggregateValue *= referencedVariable.dimensions[i];
-                    }
-                    offsetToFirstQubitOfVariable += aggregateValue * referencedVariable.bitwidth;
-                }
-            }
-        }
-
-        if (variableAccess->range) {
-            auto [nfirst, nsecond] = *variableAccess->range;
-
-            const unsigned first  = nfirst->evaluate(loopMap);
-            const unsigned second = nsecond->evaluate(loopMap);
-
-            if (first < second) {
-                for (unsigned i = first; i <= second; ++i) {
-                    lines.emplace_back(offsetToFirstQubitOfVariable + i);
-                }
-            } else {
-                for (auto i = static_cast<int>(first); std::cmp_greater_equal(i, second); --i) {
-                    lines.emplace_back(offsetToFirstQubitOfVariable + static_cast<qc::Qubit>(i));
-                }
-            }
-        } else {
-            for (unsigned i = 0U; i < referencedVariable.bitwidth; ++i) {
-                lines.emplace_back(offsetToFirstQubitOfVariable + i);
-            }
-        }
-
-        if (lines.empty()) {
-            std::cerr << "Failed to determine accessed qubits for variable access on variable with identifier " << referencedVariable.name << "\n";
-            return false;
-        }
-        return true;
+        return synthesisOfVariableAccessOk;
     }
 
     std::optional<qc::Qubit> SyrecSynthesis::getConstantLine(bool value, const std::optional<QubitInliningStack::ptr>& inlinedQubitModuleCallStack) {
@@ -1364,5 +1544,346 @@ namespace syrec {
         }
         modules.pop();
         return synthesisOfModuleBodyOk;
+    }
+
+    [[nodiscard]] std::optional<SyrecSynthesis::EvaluatedBitrangeAccess> SyrecSynthesis::evaluateAndValidateBitrangeAccess(const VariableAccess& userDefinedVariableAccess, const Number::LoopVariableMapping& loopVariableValueLookup) {
+        assert(userDefinedVariableAccess.var != nullptr);
+        const unsigned          accessedVariableBitwidth   = userDefinedVariableAccess.var->bitwidth;
+        const std::string_view& accessedVariableIdentifier = userDefinedVariableAccess.var->name;
+
+        unsigned evaluatedBitrangeStartValue = 0U;
+        unsigned evaluatedBitrangeEndValue   = accessedVariableBitwidth - 1;
+        if (!userDefinedVariableAccess.range.has_value()) {
+            return EvaluatedBitrangeAccess({.bitrangeStart = evaluatedBitrangeStartValue, .bitrangeEnd = evaluatedBitrangeEndValue});
+        }
+
+        if (const std::optional<unsigned> evaluationResultOfBitrangeStart = userDefinedVariableAccess.range->first->tryEvaluate(loopVariableValueLookup); evaluationResultOfBitrangeStart.has_value()) {
+            evaluatedBitrangeStartValue = *evaluationResultOfBitrangeStart;
+        } else {
+            std::cerr << "Failed to determine value of bitrange start in access on variable " << accessedVariableIdentifier << "\n";
+            return std::nullopt;
+        }
+
+        if (evaluatedBitrangeStartValue >= accessedVariableBitwidth) {
+            std::cerr << "User defined bitrange start value '" << std::to_string(evaluatedBitrangeStartValue) << "' was not within the valid range [0, " << std::to_string(accessedVariableBitwidth) << "] in bitrange access on variable " << accessedVariableIdentifier << "\n";
+            return std::nullopt;
+        }
+
+        if (const std::optional<unsigned> evaluationResultOfBitrangeEnd = userDefinedVariableAccess.range->second->tryEvaluate(loopVariableValueLookup); evaluationResultOfBitrangeEnd.has_value()) {
+            evaluatedBitrangeEndValue = *evaluationResultOfBitrangeEnd;
+        } else {
+            std::cerr << "Failed to determine value of bitrange start in access on variable " << accessedVariableIdentifier << "\n";
+            return std::nullopt;
+        }
+
+        if (evaluatedBitrangeEndValue >= accessedVariableBitwidth) {
+            std::cerr << "User defined bitrange end value '" << std::to_string(evaluatedBitrangeEndValue) << "' was not within the valid range [0, " << std::to_string(accessedVariableBitwidth) << "] in bitrange access on variable " << accessedVariableIdentifier << "\n";
+            return std::nullopt;
+        }
+        return EvaluatedBitrangeAccess({.bitrangeStart = evaluatedBitrangeStartValue, .bitrangeEnd = evaluatedBitrangeEndValue});
+    }
+
+    [[nodiscard]] std::optional<SyrecSynthesis::EvaluatedDimensionAccess> SyrecSynthesis::evaluateAndValidateDimensionAccess(const VariableAccess& userDefinedVariableAccess, const Number::LoopVariableMapping& loopVariableValueLookup) {
+        assert(userDefinedVariableAccess.var != nullptr);
+        const std::string_view& accessedVariableIdentifier = userDefinedVariableAccess.var->name;
+        if (userDefinedVariableAccess.indexes.size() != userDefinedVariableAccess.var->dimensions.size()) {
+            std::cerr << "The number of indices (" << std::to_string(userDefinedVariableAccess.indexes.size()) << ") defined in a variable access must match the number of dimensions (" << std::to_string(userDefinedVariableAccess.var->dimensions.size()) << ") of the accessed variable " << accessedVariableIdentifier << "\n";
+            return std::nullopt;
+        }
+
+        std::size_t              dimensionIdx             = 0;
+        EvaluatedDimensionAccess evaluatedDimensionAccess = {.containedOnlyNumericExpressions = true, .accessedValuePerDimension = std::vector<std::optional<unsigned>>(userDefinedVariableAccess.var->dimensions.size(), std::nullopt)};
+
+        for (const auto& dimensionExpr: userDefinedVariableAccess.indexes) {
+            if (dimensionExpr == nullptr) {
+                std::cerr << "Expression defining index for dimension " << std::to_string(dimensionIdx) << " in variable access on " << accessedVariableIdentifier << " cannot be NULL\n";
+                return std::nullopt;
+            }
+            if (const auto& dimensionExprAsNumericExpr = std::dynamic_pointer_cast<NumericExpression>(dimensionExpr); dimensionExprAsNumericExpr != nullptr) {
+                if (const std::optional<unsigned> evaluatedDimensionExpr = dimensionExprAsNumericExpr->value != nullptr ? dimensionExprAsNumericExpr->value->tryEvaluate(loopVariableValueLookup) : std::nullopt; evaluatedDimensionExpr.has_value()) {
+                    if (*evaluatedDimensionExpr >= userDefinedVariableAccess.var->dimensions.at(dimensionIdx)) {
+                        std::cerr << "Access on value " << std::to_string(*evaluatedDimensionExpr) << " of dimension " << std::to_string(dimensionIdx) << " was not within the valid range [0, " << std::to_string(userDefinedVariableAccess.var->dimensions.at(dimensionIdx)) << " in access on variable " << accessedVariableIdentifier << "\n";
+                        return std::nullopt;
+                    }
+                    evaluatedDimensionAccess.accessedValuePerDimension[dimensionIdx] = evaluatedDimensionExpr;
+                } else {
+                    std::cerr << "Failed to evaluate defined value for numeric expression defined in dimension " << std::to_string(dimensionIdx) << " in variable access on " << accessedVariableIdentifier << "\n";
+                    return std::nullopt;
+                }
+            } else {
+                evaluatedDimensionAccess.containedOnlyNumericExpressions = false;
+            }
+            ++dimensionIdx;
+        }
+        return evaluatedDimensionAccess;
+    }
+
+    std::optional<SyrecSynthesis::EvaluatedVariableAccess> SyrecSynthesis::evaluateAndValidateVariableAccess(const VariableAccess::ptr& userDefinedVariableAccess, const Number::LoopVariableMapping& loopVariableValueLookup, const std::unique_ptr<FirstVariableQubitOffsetLookup>& firstVariableQubitOffsetLookup) {
+        if (userDefinedVariableAccess == nullptr) {
+            std::cerr << "Cannot synthesis variable access that is null\n";
+            return std::nullopt;
+        }
+        if (userDefinedVariableAccess->var == nullptr) {
+            std::cerr << "Cannot synthesis variable access in which the accessed variable is null\n";
+            return std::nullopt;
+        }
+
+        qc::Qubit offsetToFirstQubitOfVariable = 0;
+        if (const std::optional<qc::Qubit> determinedOffsetToFirstQubitOfVariableFromLookup = firstVariableQubitOffsetLookup != nullptr ? firstVariableQubitOffsetLookup->getOffsetToFirstQubitOfVariableInCurrentScope(userDefinedVariableAccess->var->name) : std::nullopt; determinedOffsetToFirstQubitOfVariableFromLookup.has_value()) {
+            offsetToFirstQubitOfVariable = *determinedOffsetToFirstQubitOfVariableFromLookup;
+        } else {
+            std::cerr << "Failed to determine first qubit for variable with identifier " << userDefinedVariableAccess->var->name << "\n";
+            return std::nullopt;
+        }
+
+        const std::optional<EvaluatedDimensionAccess> evaluatedDimensionAccess = evaluateAndValidateDimensionAccess(*userDefinedVariableAccess, loopVariableValueLookup);
+        const std::optional<EvaluatedBitrangeAccess>  evaluatedBitrangeAccess  = evaluateAndValidateBitrangeAccess(*userDefinedVariableAccess, loopVariableValueLookup);
+        if (evaluatedBitrangeAccess.has_value() && evaluatedDimensionAccess.has_value()) {
+            return EvaluatedVariableAccess({.offsetToFirstQubitOfVariable = offsetToFirstQubitOfVariable, .accessedVariable = *userDefinedVariableAccess->var, .evaluatedBitrangeAccess = *evaluatedBitrangeAccess, .evaluatedDimensionAccess = *evaluatedDimensionAccess, .userDefinedDimensionAccess = userDefinedVariableAccess->indexes});
+        }
+        return std::nullopt;
+    }
+
+    [[nodiscard]] bool SyrecSynthesis::getQubitsForVariableAccessContainingOnlyIndicesEvaluableAtCompileTime(const EvaluatedVariableAccess& evaluatedVariableAccess, std::vector<qc::Qubit>& containerForAccessedQubits) {
+        if (!evaluatedVariableAccess.evaluatedDimensionAccess.containedOnlyNumericExpressions) {
+            std::cerr << "Synthesis of variable access containing only indices evaluable at compile time could not be performed due to evaluated variable access indicating that not all indices could be evaluated at compile time\n";
+            return false;
+        }
+
+        const Variable&                accessedVariable        = evaluatedVariableAccess.accessedVariable;
+        const EvaluatedBitrangeAccess& evaluatedBitrangeAccess = evaluatedVariableAccess.evaluatedBitrangeAccess;
+        const auto& [_, accessedValuePerDimension]             = evaluatedVariableAccess.evaluatedDimensionAccess;
+
+        // Add dimension access offset to first qubit of variable
+        auto containerForOffsetsToNextElementOfDimensionInNumberOfArrayElements   = accessedVariable.dimensions;
+        containerForOffsetsToNextElementOfDimensionInNumberOfArrayElements.back() = 1U;
+
+        for (std::size_t offset = 2U; offset <= containerForOffsetsToNextElementOfDimensionInNumberOfArrayElements.size(); ++offset) {
+            const std::size_t idxToCurrentElemInOffsetContainer                                                      = accessedVariable.dimensions.size() - offset;
+            const std::size_t idxToPrevElemInOffsetContainer                                                         = idxToCurrentElemInOffsetContainer + 1U;
+            containerForOffsetsToNextElementOfDimensionInNumberOfArrayElements.at(idxToCurrentElemInOffsetContainer) = containerForOffsetsToNextElementOfDimensionInNumberOfArrayElements.at(idxToPrevElemInOffsetContainer) * accessedVariable.dimensions.at(idxToPrevElemInOffsetContainer);
+        }
+
+        unsigned offsetToAccessedValue = 0U;
+        for (std::size_t i = 0; i < accessedValuePerDimension.size(); ++i) {
+            if (!accessedValuePerDimension.at(i).has_value()) {
+                std::cerr << "Failed to fetch accessed value of dimension " << std::to_string(i) << " in evaluated variable access that only contained compile time constant indices, this should not happen\n";
+                return false;
+            }
+            offsetToAccessedValue += *accessedValuePerDimension.at(i) * containerForOffsetsToNextElementOfDimensionInNumberOfArrayElements.at(i);
+        }
+        // Determine final offset to first accessed qubit by adding offset from bitrange start
+        const qc::Qubit currQubitIdx = evaluatedVariableAccess.offsetToFirstQubitOfVariable + (offsetToAccessedValue * accessedVariable.bitwidth);
+        containerForAccessedQubits   = evaluatedBitrangeAccess.getIndicesOfAccessedBits();
+        std::ranges::for_each(containerForAccessedQubits, [currQubitIdx](qc::Qubit& qubitIdx) { return qubitIdx += currQubitIdx; });
+        return true;
+    }
+
+    [[nodiscard]] bool SyrecSynthesis::getQubitsForVariableAccessContainingIndicesNotEvaluableAtCompileTime(const EvaluatedVariableAccess& evaluatedVariableAccess, std::vector<qc::Qubit>& containerForAccessedQubits) {
+        const std::size_t numQubitsAccessedByBitrangeAccess = evaluatedVariableAccess.evaluatedBitrangeAccess.getIndicesOfAccessedBits().size();
+        bool              synthesisOk                       = getConstantLines(static_cast<unsigned>(numQubitsAccessedByBitrangeAccess), 0U, containerForAccessedQubits);
+
+        // Generate ancillary qubits storing unrolled index
+        std::vector<qc::Qubit> ancillaryQubitsStoringUnrolledIndex;
+        synthesisOk &= calculateSymbolicUnrolledIndexForElementInVariable(evaluatedVariableAccess, ancillaryQubitsStoringUnrolledIndex);
+
+        synthesisOk &= transferQubitsOfElementAtIndexInVariableToOtherQubits(evaluatedVariableAccess, ancillaryQubitsStoringUnrolledIndex, containerForAccessedQubits, QubitTransferOperation::CopyValue);
+        return synthesisOk;
+    }
+
+    bool SyrecSynthesis::calculateSymbolicUnrolledIndexForElementInVariable(const EvaluatedVariableAccess& evaluatedVariableAccess, std::vector<qc::Qubit>& containerToStoreUnrolledIndex) {
+        assert(containerToStoreUnrolledIndex.empty());
+
+        const Variable&        accessedVariable          = evaluatedVariableAccess.accessedVariable;
+        const Expression::vec& accessedIndexPerDimension = evaluatedVariableAccess.userDefinedDimensionAccess;
+        assert(accessedIndexPerDimension.size() == accessedVariable.dimensions.size());
+
+        const std::size_t numDimensionsOfAccessedVariable                                    = accessedVariable.dimensions.size();
+        auto              containerForOffsetsToNextElementOfDimensionInNumberOfArrayElements = accessedVariable.dimensions;
+        containerForOffsetsToNextElementOfDimensionInNumberOfArrayElements.back()            = 1U;
+
+        for (std::size_t offset = 2U; offset <= containerForOffsetsToNextElementOfDimensionInNumberOfArrayElements.size(); ++offset) {
+            const std::size_t idxToCurrentElemInOffsetContainer                                                      = numDimensionsOfAccessedVariable - offset;
+            const std::size_t idxToPrevElemInOffsetContainer                                                         = idxToCurrentElemInOffsetContainer + 1U;
+            containerForOffsetsToNextElementOfDimensionInNumberOfArrayElements.at(idxToCurrentElemInOffsetContainer) = containerForOffsetsToNextElementOfDimensionInNumberOfArrayElements.at(idxToPrevElemInOffsetContainer) * accessedVariable.dimensions.at(idxToPrevElemInOffsetContainer);
+        }
+
+        // Determine how many qubits are necessary to store the unrolled index to any element in the accessed variable
+        const unsigned numElementsInAccessedVariable                               = determineNumberOfElementsInVariable(accessedVariable);
+        const unsigned numQubitsRequiredToStoreIndexToAnyElementInAccessedVariable = determineNumberOfBitsRequiredToStoreValue(numElementsInAccessedVariable);
+
+        // Generate ancillary qubits storing unrolled index
+        bool synthesisOk = getConstantLines(numQubitsRequiredToStoreIndexToAnyElementInAccessedVariable, 0U, containerToStoreUnrolledIndex);
+
+        std::optional<unsigned> compileTimeValueOfUnrolledIndex = 0U;
+        // Calculate unrolled index
+        for (std::size_t i = 0; i < numDimensionsOfAccessedVariable && synthesisOk; ++i) {
+            const unsigned offsetToNextElementOfDimensionInNumberOfArrayElements = containerForOffsetsToNextElementOfDimensionInNumberOfArrayElements.at(i);
+
+            // Integer constants (compile time constant expressions defined in the dimension access are assumed to have been evaluated during the validation of the dimension access) are assumed to have a default bitwidth of 32
+            // if no bitwidth restriction exists (i.e. defined by the bitwidth of the assigned to variable of an assignment). However, to calculate the unrolled index one or more addition/multiplication operations need to be synthesized
+            // with the addition operation requiring that both summands have the same bitwidth thus we need to truncate the bitwidth and value of the integer constant to the required bitwidth which is equal to the bitwidth required to
+            // store the index to any value of the accessed variable (i.e. for a variable a[2][3](<BITWIDTH>) one would need 3 bits to store the maximum possible index value 5 [assuming zero-based indexing]).
+            if (const auto* userDefinedIndexExprAsNumericOne = dynamic_cast<NumericExpression*>(accessedIndexPerDimension.at(i).get()); userDefinedIndexExprAsNumericOne != nullptr && userDefinedIndexExprAsNumericOne->bitwidth() > numQubitsRequiredToStoreIndexToAnyElementInAccessedVariable) {
+                const std::optional<unsigned> constantValueOfExprEvaluatedToCompileTime = evaluatedVariableAccess.evaluatedDimensionAccess.accessedValuePerDimension.at(i);
+                assert(constantValueOfExprEvaluatedToCompileTime.has_value());
+
+                // TODO: Integer truncation operation is currently hard coded but option from synthesis settings should be use if available in the future
+                unsigned evaluatedCompileTimeValueOfExpr = utils::truncateConstantValueToExpectedBitwidth(*constantValueOfExprEvaluatedToCompileTime, numQubitsRequiredToStoreIndexToAnyElementInAccessedVariable, utils::IntegerConstantTruncationOperation::Modulo);
+                evaluatedCompileTimeValueOfExpr          = utils::truncateConstantValueToExpectedBitwidth(evaluatedCompileTimeValueOfExpr * offsetToNextElementOfDimensionInNumberOfArrayElements, numQubitsRequiredToStoreIndexToAnyElementInAccessedVariable, utils::IntegerConstantTruncationOperation::Modulo);
+                // We might be able to compute parts of the unrolled index at compile time.
+                if (compileTimeValueOfUnrolledIndex.has_value()) {
+                    compileTimeValueOfUnrolledIndex = *compileTimeValueOfUnrolledIndex + evaluatedCompileTimeValueOfExpr;
+                } else if (evaluatedCompileTimeValueOfExpr != 0) {
+                    std::vector<qc::Qubit> qubitsStoringUnrolledIndexSummandForDimension;
+                    synthesisOk &= getConstantLines(numQubitsRequiredToStoreIndexToAnyElementInAccessedVariable, 0U, qubitsStoringUnrolledIndexSummandForDimension) && moveIntegerValueToAncillaryQubits(annotatableQuantumComputation, qubitsStoringUnrolledIndexSummandForDimension, evaluatedCompileTimeValueOfExpr) && assignAdd(containerToStoreUnrolledIndex, qubitsStoringUnrolledIndexSummandForDimension, AssignStatement::AssignOperation::Add) && clearIntegerValueFromAncillaryQubits(annotatableQuantumComputation, qubitsStoringUnrolledIndexSummandForDimension, evaluatedCompileTimeValueOfExpr);
+                }
+            } else {
+                compileTimeValueOfUnrolledIndex.reset();
+
+                const std::size_t      numOperationsPriorToSynthesisOfExpr = annotatableQuantumComputation.getNops();
+                std::vector<qc::Qubit> qubitsStoringSynthesizedExprOfDimension;
+                // We do not need to manually generate ancillary qubits here since they are generated during the synthesis of the expression (or qubits of a variable simply copied to our container in case of a variable access with only compile time constant expressions)
+                if (!onExpression(accessedIndexPerDimension.at(i), qubitsStoringSynthesizedExprOfDimension, {}, BinaryExpression::BinaryOperation::Add)) {
+                    std::cerr << "Failed to synthesis index expression for dimension " << std::to_string(i) << " of dimension access for variable access on variable " << accessedVariable.name << "\n";
+                    return false;
+                }
+
+                const std::size_t numOperationsAfterSynthesisOfExpr = annotatableQuantumComputation.getNops();
+                // The bitwidth of synthesized expression could be smaller/larger than the one storing the unrolled index with the former needing to be truncated/enlarged so that the subsequent addition operation can be synthesized
+                // with the addition operation requiring the same operand bitwidth. Due to this condition, we think that bitwidth of the index expression should not be larger than the bitwidth required to store the unrolled index.
+                // A smaller bitwidth should be allowed but needs to be padded to the required bitwidth.
+                if (qubitsStoringSynthesizedExprOfDimension.size() > numQubitsRequiredToStoreIndexToAnyElementInAccessedVariable) { // An index out of range value should have been already detected during the evaluation and validation of the dimension access that is assumed to have been performed prior to this call.
+                    std::cerr << "Bitwidth of expression (" << std::to_string(qubitsStoringSynthesizedExprOfDimension.size()) << ") can be at most be as large as the number of qubits (" << std::to_string(numQubitsRequiredToStoreIndexToAnyElementInAccessedVariable) << ") required to store the maximum possible unrolled index in the accessed variable " << accessedVariable.name << "\n";
+                    return false;
+                }
+
+                if (qubitsStoringSynthesizedExprOfDimension.size() < numQubitsRequiredToStoreIndexToAnyElementInAccessedVariable) {
+                    const unsigned         qubitContainersSizeDifference = numQubitsRequiredToStoreIndexToAnyElementInAccessedVariable - static_cast<unsigned>(qubitsStoringSynthesizedExprOfDimension.size());
+                    std::vector<qc::Qubit> paddingQubits;
+                    synthesisOk &= getConstantLines(qubitContainersSizeDifference, 0U, paddingQubits);
+                    qubitsStoringSynthesizedExprOfDimension.insert(qubitsStoringSynthesizedExprOfDimension.end(), paddingQubits.cbegin(), paddingQubits.cend());
+                }
+
+                std::optional<std::size_t> numOperationsPriorToSynthesisOfSummandInUnrolledIndexSum;
+                std::optional<std::size_t> numOperationsAfterSynthesisOfSummandInUnrolledIndexSum;
+
+                std::vector<qc::Qubit> qubitsStoringSymbolicValueOfSummandOfDimensionForUnrolledIndex;
+                if (offsetToNextElementOfDimensionInNumberOfArrayElements == 1) {
+                    qubitsStoringSymbolicValueOfSummandOfDimensionForUnrolledIndex = qubitsStoringSynthesizedExprOfDimension;
+                } else if (std::has_single_bit(offsetToNextElementOfDimensionInNumberOfArrayElements)) {
+                    numOperationsPriorToSynthesisOfSummandInUnrolledIndexSum = annotatableQuantumComputation.getNops();
+                    synthesisOk &= getConstantLines(numQubitsRequiredToStoreIndexToAnyElementInAccessedVariable, 0U, qubitsStoringSymbolicValueOfSummandOfDimensionForUnrolledIndex) && leftShift(annotatableQuantumComputation, qubitsStoringSymbolicValueOfSummandOfDimensionForUnrolledIndex, qubitsStoringSynthesizedExprOfDimension, offsetToNextElementOfDimensionInNumberOfArrayElements / 2);
+                    numOperationsAfterSynthesisOfSummandInUnrolledIndexSum = annotatableQuantumComputation.getNops();
+                } else {
+                    numOperationsPriorToSynthesisOfSummandInUnrolledIndexSum = annotatableQuantumComputation.getNops();
+                    std::vector<qc::Qubit> qubitsStoringOffsetToNextElementOfDimensionInNumberOfArrayElements;
+                    synthesisOk &= getConstantLines(numQubitsRequiredToStoreIndexToAnyElementInAccessedVariable, 0U, qubitsStoringSymbolicValueOfSummandOfDimensionForUnrolledIndex) && getConstantLines(numQubitsRequiredToStoreIndexToAnyElementInAccessedVariable, 0U, qubitsStoringOffsetToNextElementOfDimensionInNumberOfArrayElements) && moveIntegerValueToAncillaryQubits(annotatableQuantumComputation, qubitsStoringOffsetToNextElementOfDimensionInNumberOfArrayElements, offsetToNextElementOfDimensionInNumberOfArrayElements) && multiplication(annotatableQuantumComputation, qubitsStoringSymbolicValueOfSummandOfDimensionForUnrolledIndex, qubitsStoringSynthesizedExprOfDimension, qubitsStoringOffsetToNextElementOfDimensionInNumberOfArrayElements);
+                    numOperationsAfterSynthesisOfSummandInUnrolledIndexSum = annotatableQuantumComputation.getNops();
+                }
+                synthesisOk &= assignAdd(containerToStoreUnrolledIndex, qubitsStoringSymbolicValueOfSummandOfDimensionForUnrolledIndex, AssignStatement::AssignOperation::Add);
+
+                // We can reset the state of the ancillary qubits used to calculate the summand S = <offset_to_next_element> * <index_of_dimension> back to their initial state since they are no longer needed after the summand was added
+                // to the unrolled index by simply replaying the used operations in reverse order. This reset would allow for the ancillary qubits to be reused in future operation. We need to use the syrec::AnnotatableQuantumComputation::replayOperationsAtGivenIndexRange(...) to replay the
+                // operations instead of manually adding the qc::Operation via the qc::QuantumComputation base class since the former will add the required gate annotations to the replayed operations which the latter will not.
+                if (numOperationsPriorToSynthesisOfSummandInUnrolledIndexSum.has_value() && numOperationsPriorToSynthesisOfSummandInUnrolledIndexSum > 0) {
+                    if (!numOperationsAfterSynthesisOfSummandInUnrolledIndexSum.has_value()) {
+                        std::cerr << "Failed to undo quantum operations required to calculate summand of dimension " << std::to_string(i) << "for unrolled index sum\n";
+                        return false;
+                    }
+
+                    const std::size_t idxOfFirstRelevantOperation = *numOperationsAfterSynthesisOfSummandInUnrolledIndexSum - 1;
+                    const std::size_t idxOfLastRelevantOperation  = *numOperationsPriorToSynthesisOfSummandInUnrolledIndexSum;
+                    synthesisOk &= annotatableQuantumComputation.replayOperationsAtGivenIndexRange(idxOfFirstRelevantOperation, idxOfLastRelevantOperation);
+                }
+
+                if (numOperationsPriorToSynthesisOfExpr > 0 && numOperationsPriorToSynthesisOfExpr != numOperationsAfterSynthesisOfExpr) {
+                    // After the summand generated for the current dimension is added to the unrolled index (and the operations for the summand assumed to be reset at this point) one can also undo the operations required to synthesize the user-defined expression
+                    // for the current dimension to reset the used ancillary qubits back to their initial state using the same procedure as for the summand.
+                    const std::size_t idxOfFirstRelevantOperation = numOperationsAfterSynthesisOfExpr - 1;
+                    const std::size_t idxOfLastRelevantOperation  = numOperationsPriorToSynthesisOfExpr;
+                    synthesisOk &= annotatableQuantumComputation.replayOperationsAtGivenIndexRange(idxOfFirstRelevantOperation, idxOfLastRelevantOperation);
+                }
+            }
+        }
+        return synthesisOk;
+    }
+
+    bool SyrecSynthesis::transferQubitsOfElementAtIndexInVariableToOtherQubits(const EvaluatedVariableAccess& evaluatedVariableAccess, const std::vector<qc::Qubit>& qubitsStoringUnrolledIndexOfElementToSelect, const std::vector<qc::Qubit>& qubitsStoringResultOfTransferOperation, const QubitTransferOperation qubitTransferOperation) {
+        if (qubitTransferOperation != QubitTransferOperation::SwapQubits && qubitTransferOperation != QubitTransferOperation::CopyValue) {
+            std::cerr << "Invalid qubit transfer operation defined\n";
+            return false;
+        }
+
+        const Variable&                accessedVariable                     = evaluatedVariableAccess.accessedVariable;
+        const EvaluatedBitrangeAccess& evaluatedBitrangeAccess              = evaluatedVariableAccess.evaluatedBitrangeAccess;
+        const unsigned                 offsetToFirstQubitOfAccessedVariable = evaluatedVariableAccess.offsetToFirstQubitOfVariable;
+
+        if (const std::size_t numQubitsAccessedByBitrange = evaluatedBitrangeAccess.getIndicesOfAccessedBits().size(); numQubitsAccessedByBitrange != qubitsStoringResultOfTransferOperation.size()) {
+            std::cerr << "Tried to perform a conditional swap of the " << std::to_string(numQubitsAccessedByBitrange) << " qubits of the accessed bitrange with the provided " << std::to_string(qubitsStoringResultOfTransferOperation.size()) << " qubits\n";
+            return false;
+        }
+
+        bool              synthesisOk                                                 = true;
+        const std::size_t numElementsInAccessedVariable                               = determineNumberOfElementsInVariable(accessedVariable);
+        const unsigned    numQubitsRequiredToStoreIndexToAnyElementInAccessedVariable = determineNumberOfBitsRequiredToStoreValue(static_cast<unsigned>(numElementsInAccessedVariable));
+
+        std::vector<qc::Qubit> ancillaryQubitsStoringCurrentIndex;
+        synthesisOk &= getConstantLines(numQubitsRequiredToStoreIndexToAnyElementInAccessedVariable, 0U, ancillaryQubitsStoringCurrentIndex);
+
+        qc::Qubit qubitOffsetToCurrentElementInAccessedVariable = offsetToFirstQubitOfAccessedVariable;
+        // Since the start qubit is allowed to be larger than the end qubit in a bitrange access of a variable access, we determine the offsets to the qubits accessed with the defined bitrange in the bitwidht of the variable
+        // e.g. assuming a variable declaration 'in a[2][3](4)' then the offsets generated for a variable access 'a[0][1].2:1' are (2, 1) while the offsets for 'a[0][1].1:2' are (1, 2).
+        const std::vector<qc::Qubit> relativeQubitOffsetForAccessedQubitsInElement = evaluatedBitrangeAccess.getIndicesOfAccessedBits();
+
+        const qc::Controls controlQubitsFromCompareOperation(ancillaryQubitsStoringCurrentIndex.cbegin(), ancillaryQubitsStoringCurrentIndex.cend());
+        for (std::size_t i = 0; i < numElementsInAccessedVariable && synthesisOk; ++i) {
+            // Move current index to ancillary qubits and compare with unrolled index with the result of the operation being stored in the qubits storing the current index.
+            // The latter qubits are then used as control qubits to perform the qubit-wise transfer of the qubits of the currently accessed element to the result qubits.
+            synthesisOk &= checkIfQubitsMatchAndStoreResultInRhsOperandQubits(annotatableQuantumComputation, qubitsStoringUnrolledIndexOfElementToSelect, ancillaryQubitsStoringCurrentIndex, false);
+
+            annotatableQuantumComputation.activateControlQubitPropagationScope();
+            for (const qc::Control controlQubit: controlQubitsFromCompareOperation) {
+                synthesisOk &= annotatableQuantumComputation.registerControlQubitForPropagationInCurrentAndNestedScopes(controlQubit.qubit);
+            }
+
+            for (std::size_t j = 0; j < relativeQubitOffsetForAccessedQubitsInElement.size() && synthesisOk; ++j) {
+                const qc::Qubit currAccessedQubitOfVariable = qubitOffsetToCurrentElementInAccessedVariable + relativeQubitOffsetForAccessedQubitsInElement.at(j);
+
+                if (qubitTransferOperation == QubitTransferOperation::SwapQubits) {
+                    synthesisOk &= annotatableQuantumComputation.addOperationsImplementingFredkinGate(currAccessedQubitOfVariable, qubitsStoringResultOfTransferOperation.at(j));
+                } else {
+                    synthesisOk &= annotatableQuantumComputation.addOperationsImplementingCnotGate(currAccessedQubitOfVariable, qubitsStoringResultOfTransferOperation.at(j));
+                }
+            }
+            qubitOffsetToCurrentElementInAccessedVariable += accessedVariable.bitwidth;
+            annotatableQuantumComputation.deactivateControlQubitPropagationScope();
+
+            // We reset the qubits originally storing the value of the accessed element in the variable by first reverting the operations used to compare the unrolled index to the index of the accessed element and then incrementing it
+            // to advance the index to the next element.
+            synthesisOk &= checkIfQubitsMatchAndStoreResultInRhsOperandQubits(annotatableQuantumComputation, qubitsStoringUnrolledIndexOfElementToSelect, ancillaryQubitsStoringCurrentIndex, true) && increment(annotatableQuantumComputation, ancillaryQubitsStoringCurrentIndex);
+        }
+        // Clear the ancillary qubits storing the current index of the accessed element in the variable back to their initial state (i.e. zero them).
+        synthesisOk &= clearIntegerValueFromAncillaryQubits(annotatableQuantumComputation, ancillaryQubitsStoringCurrentIndex, static_cast<unsigned>(numElementsInAccessedVariable));
+        return synthesisOk;
+    }
+
+    std::vector<unsigned> SyrecSynthesis::EvaluatedBitrangeAccess::getIndicesOfAccessedBits() const {
+        std::size_t bitrangeStartAndEndIdxDifference = 0;
+        bool        bitrangeStartIdxLargerThanEnd    = false;
+        if (bitrangeStart > bitrangeEnd) {
+            bitrangeStartAndEndIdxDifference = bitrangeStart - bitrangeEnd;
+            bitrangeStartIdxLargerThanEnd    = true;
+        } else {
+            bitrangeStartAndEndIdxDifference = bitrangeEnd - bitrangeStart;
+        }
+
+        unsigned    currBitIdx = bitrangeStart;
+        std::vector containerForAccessedBits(bitrangeStartAndEndIdxDifference + 1U, 0U);
+        for (qc::Qubit& bitIdx: containerForAccessedBits) {
+            bitIdx     = currBitIdx;
+            currBitIdx = bitrangeStartIdxLargerThanEnd ? currBitIdx - 1U : currBitIdx + 1U;
+        }
+        return containerForAccessedBits;
     }
 } // namespace syrec

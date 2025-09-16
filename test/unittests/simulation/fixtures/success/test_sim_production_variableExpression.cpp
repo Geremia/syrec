@@ -48,7 +48,7 @@ TYPED_TEST_P(BaseSimulationTestFixture, AccessOnBitrangeUsingLoopVariableAsIndex
 }
 
 TYPED_TEST_P(BaseSimulationTestFixture, AccessOnBitrangeUsingLoopVariableAsIndexOfBitrangeStartAndLoopVariableAsIndexOfBitrangeEndIndexOf1DVariable) {
-    GTEST_SKIP() << "Test disabled due to issue #294 (non-compile time constant expression not usable as index in dimension access)";
+    GTEST_SKIP() << "Test disabled due to truncation of integer constants not being performed in synthesis leading to different operand bitwidths (see issue #295)";
     this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
 }
 
@@ -61,7 +61,7 @@ TYPED_TEST_P(BaseSimulationTestFixture, AccessOnBitrangeUsingConstantExpressionA
 }
 
 TYPED_TEST_P(BaseSimulationTestFixture, AccessOnBitrangeUsingConstantExpressionAsIndexOfBitrangeStartAndLoopVariableAsIndexOfBitrangeEndIndexOf1DVariable) {
-    GTEST_SKIP() << "Test disabled due to issue #294 (non-compile time constant expression not usable as index in dimension access)";
+    GTEST_SKIP() << "Test disabled due to truncation of integer constants not being performed in synthesis leading to different operand bitwidths (see issue #295)";
     this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
 }
 
@@ -82,23 +82,75 @@ TYPED_TEST_P(BaseSimulationTestFixture, AccessOnValueOfDimensionUsingConstantExp
 }
 
 TYPED_TEST_P(BaseSimulationTestFixture, AccessOnValueOfDimensionUsingVariableAccessAsIndex) {
-    GTEST_SKIP() << "Test disabled due to issue #294 (non-compile time constant expression not usable as index in dimension access)";
-    this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
+    if constexpr (BaseSimulationTestFixture<TypeParam>::isTestingLineAwareSynthesis()) {
+        GTEST_SKIP() << "Test disabled due to issue #280 (incorrect line aware synthesis of assignments) that need to be resolved before statements with a variable access using a non-compile time constant expression as index can be synthesized";
+    } else {
+        this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
+    }
 }
 
 TYPED_TEST_P(BaseSimulationTestFixture, AccessOnValueOfDimensionUsingBinaryExpressionAsIndex) {
-    GTEST_SKIP() << "Test disabled due to issue #294 (non-compile time constant expression not usable as index in dimension access)";
-    this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
+    if constexpr (BaseSimulationTestFixture<TypeParam>::isTestingLineAwareSynthesis()) {
+        GTEST_SKIP() << "Test disabled due to issue #280 (incorrect line aware synthesis of assignments) that needs to be resolved before statements with a variable access using a non-compile time constant expression as index can be synthesized";
+    } else {
+        this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
+    }
 }
 
 TYPED_TEST_P(BaseSimulationTestFixture, AccessOnValueOfDimensionUsingShiftExpressionAsIndex) {
-    GTEST_SKIP() << "Test disabled due to issue #294 (non-compile time constant expression not usable as index in dimension access)";
-    this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
+    if constexpr (BaseSimulationTestFixture<TypeParam>::isTestingLineAwareSynthesis()) {
+        GTEST_SKIP() << "Test disabled due to issue #280 (incorrect line aware synthesis of assignments) that needs to be resolved before statements with a variable access using a non-compile time constant expression as index can be synthesized";
+    } else {
+        this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
+    }
 }
 
 TYPED_TEST_P(BaseSimulationTestFixture, AccessOnValueOfDimensionUsingUnaryExpressionAsIndex) {
-    GTEST_SKIP() << "Test disabled due to issue #294 (non-compile time constant expression not usable as index in dimension access)";
-    this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
+    if constexpr (BaseSimulationTestFixture<TypeParam>::isTestingLineAwareSynthesis()) {
+        GTEST_SKIP() << "Test disabled due to issue #280 (incorrect line aware synthesis of assignments) that needs to be resolved before statements with a variable access using a non-compile time constant expression as index can be synthesized";
+    } else {
+        this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
+    }
+}
+
+TYPED_TEST_P(BaseSimulationTestFixture, DimensionAccessDefiningMultipleNonCompileTimeConstantExpressionsAsIndex) {
+    if constexpr (BaseSimulationTestFixture<TypeParam>::isTestingLineAwareSynthesis()) {
+        GTEST_SKIP() << "Test disabled due to issue #280 (incorrect line aware synthesis of assignments) that needs to be resolved before statements with a variable access using a non-compile time constant expression as index can be synthesized";
+    } else {
+        this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
+    }
+}
+
+TYPED_TEST_P(BaseSimulationTestFixture, IndexExpressionInDimensionAccessContainingVariableAccessWithNonCompileTimeConstantExpressionIndex) {
+    if constexpr (BaseSimulationTestFixture<TypeParam>::isTestingLineAwareSynthesis()) {
+        GTEST_SKIP() << "Test disabled due to issue #280 (incorrect line aware synthesis of assignments) that needs to be resolved before statements with a variable access using a non-compile time constant expression as index can be synthesized";
+    } else {
+        this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
+    }
+}
+
+TYPED_TEST_P(BaseSimulationTestFixture, AccessOnEveryElementOfVariableUsingNonCompileTimeConstantExpressionInDimensionAccess) {
+    if constexpr (BaseSimulationTestFixture<TypeParam>::isTestingLineAwareSynthesis()) {
+        GTEST_SKIP() << "Test disabled due to issue #280 (incorrect line aware synthesis of assignments) that needs to be resolved before statements with a variable access using a non-compile time constant expression as index can be synthesized";
+    } else {
+        this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
+    }
+}
+
+TYPED_TEST_P(BaseSimulationTestFixture, AccessOnBitInNonCompileTimeConstantExpressionInDimensionAccessOfVariableAccess) {
+    if constexpr (BaseSimulationTestFixture<TypeParam>::isTestingLineAwareSynthesis()) {
+        GTEST_SKIP() << "Test disabled due to issue #280 (incorrect line aware synthesis of assignments) that needs to be resolved before statements with a variable access using a non-compile time constant expression as index can be synthesized";
+    } else {
+        this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
+    }
+}
+
+TYPED_TEST_P(BaseSimulationTestFixture, AccessOnBitrangeInNonCompileTimeConstantExpressionInDimensionAccessOfVariableAccess) {
+    if constexpr (BaseSimulationTestFixture<TypeParam>::isTestingLineAwareSynthesis()) {
+        GTEST_SKIP() << "Test disabled due to issue #280 (incorrect line aware synthesis of assignments) that needs to be resolved before statements with a variable access using a non-compile time constant expression as index can be synthesized";
+    } else {
+        this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
+    }
 }
 
 TYPED_TEST_P(BaseSimulationTestFixture, CombinationOfDimensionAndBitAccess) {
@@ -129,6 +181,11 @@ REGISTER_TYPED_TEST_SUITE_P(BaseSimulationTestFixture,
                             AccessOnValueOfDimensionUsingBinaryExpressionAsIndex,
                             AccessOnValueOfDimensionUsingShiftExpressionAsIndex,
                             AccessOnValueOfDimensionUsingUnaryExpressionAsIndex,
+                            DimensionAccessDefiningMultipleNonCompileTimeConstantExpressionsAsIndex,
+                            IndexExpressionInDimensionAccessContainingVariableAccessWithNonCompileTimeConstantExpressionIndex,
+                            AccessOnEveryElementOfVariableUsingNonCompileTimeConstantExpressionInDimensionAccess,
+                            AccessOnBitInNonCompileTimeConstantExpressionInDimensionAccessOfVariableAccess,
+                            AccessOnBitrangeInNonCompileTimeConstantExpressionInDimensionAccessOfVariableAccess,
                             CombinationOfDimensionAndBitAccess,
                             CombinationOfDimensionAndBitrangeAccess);
 

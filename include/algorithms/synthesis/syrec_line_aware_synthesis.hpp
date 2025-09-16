@@ -16,9 +16,11 @@
 #include "core/syrec/expression.hpp"
 #include "core/syrec/program.hpp"
 #include "core/syrec/statement.hpp"
+#include "core/syrec/variable.hpp"
 #include "ir/Definitions.hpp"
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace syrec {
@@ -41,9 +43,8 @@ namespace syrec {
 
         bool inverse();
 
-        bool assignAdd(std::vector<qc::Qubit>& rhs, std::vector<qc::Qubit>& lhs, [[maybe_unused]] AssignStatement::AssignOperation assignOperation) override;
-
-        bool assignSubtract(std::vector<qc::Qubit>& rhs, std::vector<qc::Qubit>& lhs, [[maybe_unused]] AssignStatement::AssignOperation assignOperation) override;
+        bool assignAdd(std::vector<qc::Qubit>& lhs, std::vector<qc::Qubit>& rhs, [[maybe_unused]] AssignStatement::AssignOperation assignOperation) override;
+        bool assignSubtract(std::vector<qc::Qubit>& lhs, std::vector<qc::Qubit>& rhs, [[maybe_unused]] AssignStatement::AssignOperation assignOperation) override;
 
         bool assignExor(std::vector<qc::Qubit>& lhs, std::vector<qc::Qubit>& rhs, [[maybe_unused]] AssignStatement::AssignOperation assignOperation) override;
 
@@ -54,13 +55,13 @@ namespace syrec {
         bool flow(const BinaryExpression& expression, const std::vector<qc::Qubit>& v);
 
         bool expAdd([[maybe_unused]] unsigned bitwidth, std::vector<qc::Qubit>& lines, const std::vector<qc::Qubit>& lhs, const std::vector<qc::Qubit>& rhs) override {
-            const bool synthesisOfExprOk = increase(annotatableQuantumComputation, rhs, lhs);
+            const bool synthesisOfExprOk = inplaceAdd(annotatableQuantumComputation, lhs, rhs);
             lines                        = rhs;
             return synthesisOfExprOk;
         }
 
         bool expSubtract([[maybe_unused]] unsigned bitwidth, std::vector<qc::Qubit>& lines, const std::vector<qc::Qubit>& lhs, const std::vector<qc::Qubit>& rhs) override {
-            const bool synthesisOfExprOk = decreaseNewAssign(annotatableQuantumComputation, rhs, lhs);
+            const bool synthesisOfExprOk = decreaseNewAssign(annotatableQuantumComputation, lhs, rhs);
             lines                        = rhs;
             return synthesisOfExprOk;
         }
@@ -74,9 +75,11 @@ namespace syrec {
         bool expEvaluate(std::vector<qc::Qubit>& lines, BinaryExpression::BinaryOperation binaryOperation, const std::vector<qc::Qubit>& lhs, const std::vector<qc::Qubit>& rhs) const;
 
         [[nodiscard]] bool expressionSingleOp(BinaryExpression::BinaryOperation binaryOperation, const std::vector<qc::Qubit>& expLhs, const std::vector<qc::Qubit>& expRhs) const;
-
-        static bool decreaseNewAssign(AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<qc::Qubit>& rhs, const std::vector<qc::Qubit>& lhs);
+        static bool        decreaseNewAssign(AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<qc::Qubit>& lhs, const std::vector<qc::Qubit>& rhs);
 
         bool expressionOpInverse([[maybe_unused]] BinaryExpression::BinaryOperation binaryOperation, [[maybe_unused]] const std::vector<qc::Qubit>& expLhs, [[maybe_unused]] const std::vector<qc::Qubit>& expRhs) override;
+
+        [[nodiscard]] std::optional<bool> doesVariableAccessNotContainCompileTimeconstantExpressions(const VariableAccess::ptr& variableAccess) const;
+        [[nodiscard]] std::optional<bool> doesExpressionNotContainVariableAccessWithCompileTimeConstantExpressions(const Expression::ptr& expr) const;
     };
 } // namespace syrec

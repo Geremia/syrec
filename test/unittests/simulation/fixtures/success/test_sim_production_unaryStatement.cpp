@@ -127,6 +127,29 @@ TYPED_TEST_P(BaseSimulationTestFixture, IncrementAssignOfBitrangeOfVariableWithB
     this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
 }
 
+TYPED_TEST_P(BaseSimulationTestFixture, UnaryAssignmentToFullBitwidthWithDimensionAccessOfAssignedToVariableContainingNonCompileTimeConstantExpressions) {
+    if constexpr (BaseSimulationTestFixture<TypeParam>::isTestingLineAwareSynthesis()) {
+        GTEST_SKIP() << "Test disabled due to issue #280 (incorrect line aware synthesis of assignments) that needs to be resolved before statements with a variable access using a non-compile time constant expression as index can be synthesized";
+    } else {
+        this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
+    }
+}
+
+TYPED_TEST_P(BaseSimulationTestFixture, UnaryAssignmentToBitWithDimensionAccessOfAssignedToVariableContainingNonCompileTimeConstantExpressions) {
+    if constexpr (BaseSimulationTestFixture<TypeParam>::isTestingLineAwareSynthesis()) {
+        GTEST_SKIP() << "Test disabled due to issue #280 (incorrect line aware synthesis of assignments) that needs to be resolved before statements with a variable access using a non-compile time constant expression as index can be synthesized";
+    } else {
+        this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
+    }
+}
+
+TYPED_TEST_P(BaseSimulationTestFixture, UnaryAssignmentToBitrangeWithDimensionAccessOfAssignedToVariableContainingNonCompileTimeConstantExpressions) {
+    if constexpr (BaseSimulationTestFixture<TypeParam>::isTestingLineAwareSynthesis()) {
+        GTEST_SKIP() << "Test disabled due to issue #280 (incorrect line aware synthesis of assignments) that needs to be resolved before statements with a variable access using a non-compile time constant expression as index can be synthesized";
+    } else {
+        this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
+    }
+}
 REGISTER_TYPED_TEST_SUITE_P(BaseSimulationTestFixture,
                             IncrementAssignOfVariable,
                             IncrementAssignOfBitOfVariable,
@@ -137,6 +160,7 @@ REGISTER_TYPED_TEST_SUITE_P(BaseSimulationTestFixture,
                             IncrementAssignBitrangeOfValueOfDimensionOfVariableWithBitrangeStartSmallerThanEnd,
                             IncrementAssignBitrangeOfValueOfDimensionOfVariableWithBitrangeStartLargerThanEnd,
                             IncrementAssignBitrangeOfValueOfDimensionOfVariableWithBitrangeStartEqualToEnd,
+
                             DecrementAssignOfVariable,
                             DecrementAssignOfBitOfVariable,
                             DecrementAssignOfBitrangeOfVariableWithBitrangeStartSmallerThanEnd,
@@ -155,7 +179,11 @@ REGISTER_TYPED_TEST_SUITE_P(BaseSimulationTestFixture,
                             BitwiseNegateAssignBitOfValueOfDimensionOfVariable,
                             BitwiseNegateAssignBitrangeOfValueOfDimensionOfVariableWithBitrangeStartSmallerThanEnd,
                             BitwiseNegateAssignBitrangeOfValueOfDimensionOfVariableWithBitrangeStartLargerThanEnd,
-                            BitwiseNegateAssignBitrangeOfValueOfDimensionOfVariableWithBitrangeStartEqualToEnd);
+                            BitwiseNegateAssignBitrangeOfValueOfDimensionOfVariableWithBitrangeStartEqualToEnd,
+
+                            UnaryAssignmentToFullBitwidthWithDimensionAccessOfAssignedToVariableContainingNonCompileTimeConstantExpressions,
+                            UnaryAssignmentToBitWithDimensionAccessOfAssignedToVariableContainingNonCompileTimeConstantExpressions,
+                            UnaryAssignmentToBitrangeWithDimensionAccessOfAssignedToVariableContainingNonCompileTimeConstantExpressions);
 
 using SynthesizerTypes = testing::Types<syrec::CostAwareSynthesis, syrec::LineAwareSynthesis>;
 INSTANTIATE_TYPED_TEST_SUITE_P(SyrecSynthesisTest, BaseSimulationTestFixture, SynthesizerTypes, );

@@ -123,6 +123,38 @@ TYPED_TEST_P(BaseSimulationTestFixture, SwapWithLeftOperationBeingAccessOnBitran
     this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
 }
 
+TYPED_TEST_P(BaseSimulationTestFixture, UsageOfVariableAccessWithNonCompileTimeConstantExpressionInDimensionAccessOnLhsOfSwapStatement) {
+    this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
+}
+
+TYPED_TEST_P(BaseSimulationTestFixture, UsageOfVariableAccessWithNonCompileTimeConstantExpressionInDimensionAccessOnRhsOfSwapStatement) {
+    this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
+}
+
+TYPED_TEST_P(BaseSimulationTestFixture, UsageOfVariableAccessWithNonCompileTimeConstantExpressionInDimensionAccessOfBothOperandsOfSwapStatementAccessingFullBitwidth) {
+    if constexpr (BaseSimulationTestFixture<TypeParam>::isTestingLineAwareSynthesis()) {
+        GTEST_SKIP() << "Test disabled due to issue #280 (incorrect line aware synthesis of assignments) that needs to be resolved before statements with a variable access using a non-compile time constant expression as index can be synthesized";
+    } else {
+        this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
+    }
+}
+
+TYPED_TEST_P(BaseSimulationTestFixture, UsageOfVariableAccessWithNonCompileTimeConstantExpressionInDimensionAccessOfBothOperandsOfSwapStatementAccessingBit) {
+    if constexpr (BaseSimulationTestFixture<TypeParam>::isTestingLineAwareSynthesis()) {
+        GTEST_SKIP() << "Test disabled due to issue #280 (incorrect line aware synthesis of assignments) that needs to be resolved before statements with a variable access using a non-compile time constant expression as index can be synthesized";
+    } else {
+        this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
+    }
+}
+
+TYPED_TEST_P(BaseSimulationTestFixture, UsageOfVariableAccessWithNonCompileTimeConstantExpressionInDimensionAccessOfBothOperandsOfSwapStatementAccessingBitrange) {
+    if constexpr (BaseSimulationTestFixture<TypeParam>::isTestingLineAwareSynthesis()) {
+        GTEST_SKIP() << "Test disabled due to issue #280 (incorrect line aware synthesis of assignments) that needs to be resolved before statements with a variable access using a non-compile time constant expression as index can be synthesized";
+    } else {
+        this->performTestExecutionForCircuitLoadedFromJson(RELATIVE_PATH_TO_TEST_CASE_DATA_JSON_FILE, this->getNameOfCurrentlyExecutedTest());
+    }
+}
+
 REGISTER_TYPED_TEST_SUITE_P(BaseSimulationTestFixture,
                             SwapWithLeftOperationBeingAccessOn1DVariable,
                             SwapWithLeftOperationBeingAccessOn1DVariableWithBitOfOtherVariable,
@@ -152,7 +184,13 @@ REGISTER_TYPED_TEST_SUITE_P(BaseSimulationTestFixture,
                             SwapWithLeftOperationBeingAccessOnBitrangeWithStartLargerThanEndOfValueOfDimensionOfVariableWithNotOverlappingBitrangeOfValueOfSameDimensionOfSameVariable,
                             SwapWithLeftOperationBeingAccessOnBitrangeWithStartEqualToEndOfValueOfDimensionOfVariableWithBitrangeOfValueOfDimensionOfOtherVariable,
                             SwapWithLeftOperationBeingAccessOnBitrangeWithStartEqualToEndOfValueOfDimensionOfVariableWithOverlappingBitrangeOfValueOfOtherDimensionOfSameVariable,
-                            SwapWithLeftOperationBeingAccessOnBitrangeWithStartEqualToEndOfValueOfDimensionOfVariableWithNotOverlappingBitrangeOfValueOfSameDimensionOfSameVariable);
+                            SwapWithLeftOperationBeingAccessOnBitrangeWithStartEqualToEndOfValueOfDimensionOfVariableWithNotOverlappingBitrangeOfValueOfSameDimensionOfSameVariable,
+
+                            UsageOfVariableAccessWithNonCompileTimeConstantExpressionInDimensionAccessOnLhsOfSwapStatement,
+                            UsageOfVariableAccessWithNonCompileTimeConstantExpressionInDimensionAccessOnRhsOfSwapStatement,
+                            UsageOfVariableAccessWithNonCompileTimeConstantExpressionInDimensionAccessOfBothOperandsOfSwapStatementAccessingFullBitwidth,
+                            UsageOfVariableAccessWithNonCompileTimeConstantExpressionInDimensionAccessOfBothOperandsOfSwapStatementAccessingBit,
+                            UsageOfVariableAccessWithNonCompileTimeConstantExpressionInDimensionAccessOfBothOperandsOfSwapStatementAccessingBitrange);
 
 using SynthesizerTypes = testing::Types<syrec::CostAwareSynthesis, syrec::LineAwareSynthesis>;
 INSTANTIATE_TYPED_TEST_SUITE_P(SyrecSynthesisTest, BaseSimulationTestFixture, SynthesizerTypes, );
