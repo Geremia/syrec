@@ -13,15 +13,15 @@
 #include "algorithms/synthesis/syrec_cost_aware_synthesis.hpp"
 #include "algorithms/synthesis/syrec_line_aware_synthesis.hpp"
 #include "core/annotatable_quantum_computation.hpp"
+#include "core/configurable_options.hpp"
 #include "core/n_bit_values_container.hpp"
-#include "core/properties.hpp"
+#include "core/statistics.hpp"
 #include "core/syrec/program.hpp"
 
 #include <cstddef>
+#include <exception>
 #include <fstream>
 #include <gtest/gtest.h>
-#include <ios>
-#include <memory>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
@@ -61,12 +61,12 @@ public:
         return std::is_same_v<T, syrec::LineAwareSynthesis>;
     }
 
-    void performTestExecutionExpectingSynthesisFailureForCircuitLoadedFromString(const std::string_view& circuitToParseAndSynthesis, const std::optional<syrec::Properties::ptr>& optionalSynthesisSettings = std::nullopt) {
+    void performTestExecutionExpectingSynthesisFailureForCircuitLoadedFromString(const std::string_view& circuitToParseAndSynthesis, const std::optional<syrec::ConfigurableOptions>& optionalSynthesisSettings = std::nullopt) {
         ASSERT_NO_FATAL_FAILURE(parseInputCircuitFromString(circuitToParseAndSynthesis, syrecProgramInstance));
         ASSERT_FALSE(performProgramSynthesis(syrecProgramInstance, annotatableQuantumComputation, optionalSynthesisSettings)) << "Expected synthesis of input circuit to fail";
     }
 
-    void performTestExecutionForCircuitLoadedFromJson(const std::string& pathToTestCaseDataJsonFile, const std::string& testcaseJsonKey, const std::optional<syrec::Properties::ptr>& optionalSynthesisSettings = std::nullopt) {
+    void performTestExecutionForCircuitLoadedFromJson(const std::string& pathToTestCaseDataJsonFile, const std::string& testcaseJsonKey, const std::optional<syrec::ConfigurableOptions>& optionalSynthesisSettings = std::nullopt, syrec::Statistics* optionalRecordedStatistics = nullptr) {
         json jsonDataOfTestCase;
         ASSERT_NO_FATAL_FAILURE(loadAndParseTestCaseDataFromJson(pathToTestCaseDataJsonFile, testcaseJsonKey, jsonDataOfTestCase));
         ASSERT_NO_FATAL_FAILURE(validateJsonStructure(jsonDataOfTestCase));
@@ -76,7 +76,7 @@ public:
         // https://github.com/nlohmann/json/issues/3827 or https://en.cppreference.com/w/cpp/language/dependent_name.html#template_disambiguator).
         const std::string& stringifiedInputCircuit = jsonDataOfTestCase[jsonKeyForInputCircuit].template get<std::string>();
         ASSERT_NO_FATAL_FAILURE(parseInputCircuitFromString(stringifiedInputCircuit, syrecProgramInstance));
-        ASSERT_TRUE(performProgramSynthesis(syrecProgramInstance, annotatableQuantumComputation, optionalSynthesisSettings)) << "Synthesis of input circuit was not successful";
+        ASSERT_TRUE(performProgramSynthesis(syrecProgramInstance, annotatableQuantumComputation, optionalSynthesisSettings, optionalRecordedStatistics)) << "Synthesis of input circuit was not successful";
 
         const json& jsonDataOfSimulationRuns = jsonDataOfTestCase[jsonKeyForSimulationRuns];
         for (const auto& jsonDataOfSimulationRun: jsonDataOfSimulationRuns) {
@@ -98,12 +98,16 @@ public:
 
 protected:
     static void loadAndParseTestCaseDataFromJson(const std::string& pathToTestCaseDataJsonFile, const std::string& testcaseJsonKey, json& containerForJsonDataOfTestCase) {
-        std::ifstream inputFileStream(pathToTestCaseDataJsonFile, std::ios_base::in);
+        std::ifstream inputFileStream(pathToTestCaseDataJsonFile, std::ifstream::in | std::ifstream::binary);
         ASSERT_TRUE(inputFileStream.good()) << "Input file @" << pathToTestCaseDataJsonFile << " is not in a usable state (e.g. does not exist)";
 
-        const json parsedJsonDataOfFile = json::parse(inputFileStream);
-        ASSERT_TRUE(parsedJsonDataOfFile.contains(testcaseJsonKey)) << "Matching entry for test case was not found in json loaded from " << pathToTestCaseDataJsonFile << " when using '" << testcaseJsonKey << "' as key";
-        containerForJsonDataOfTestCase = parsedJsonDataOfFile[testcaseJsonKey];
+        try {
+            const json parsedJsonDataOfFile = json::parse(inputFileStream);
+            ASSERT_TRUE(parsedJsonDataOfFile.contains(testcaseJsonKey)) << "Matching entry for test case was not found in json loaded from " << pathToTestCaseDataJsonFile << " when using '" << testcaseJsonKey << "' as key";
+            containerForJsonDataOfTestCase = parsedJsonDataOfFile[testcaseJsonKey];
+        } catch (const std::exception& ex) {
+            FAIL() << "Failed to parse JSON '" << pathToTestCaseDataJsonFile << "': " << ex.what();
+        }
     }
 
     void validateJsonStructure(const json& jsonToValidate) const {
@@ -127,12 +131,12 @@ protected:
         }
     }
 
-    [[nodiscard]] static bool performProgramSynthesis(const syrec::Program& program, syrec::AnnotatableQuantumComputation& annotatableQuantumComputation, const std::optional<syrec::Properties::ptr>& optionalSynthesisSettings = std::nullopt) {
-        const auto synthesisSettings = optionalSynthesisSettings.value_or(std::make_shared<syrec::Properties>());
+    [[nodiscard]] static bool performProgramSynthesis(const syrec::Program& program, syrec::AnnotatableQuantumComputation& annotatableQuantumComputation, const std::optional<syrec::ConfigurableOptions>& optionalSynthesisSettings = std::nullopt, syrec::Statistics* optionalRecordedStatistics = nullptr) {
+        const auto synthesisSettings = optionalSynthesisSettings.value_or(syrec::ConfigurableOptions());
         if constexpr (std::is_same_v<T, syrec::CostAwareSynthesis>) {
-            return syrec::CostAwareSynthesis::synthesize(annotatableQuantumComputation, program, synthesisSettings);
+            return syrec::CostAwareSynthesis::synthesize(annotatableQuantumComputation, program, synthesisSettings, optionalRecordedStatistics);
         } else {
-            return syrec::LineAwareSynthesis::synthesize(annotatableQuantumComputation, program, synthesisSettings);
+            return syrec::LineAwareSynthesis::synthesize(annotatableQuantumComputation, program, synthesisSettings, optionalRecordedStatistics);
         }
     }
 
@@ -140,7 +144,7 @@ protected:
         ASSERT_EQ(inputState.size(), expectedOutputState.size());
 
         syrec::NBitValuesContainer actualOutputState(inputState.size());
-        ASSERT_NO_FATAL_FAILURE(syrec::simpleSimulation(actualOutputState, annotatableQuantumComputation, inputState));
+        ASSERT_NO_FATAL_FAILURE(syrec::simpleSimulation(actualOutputState, annotatableQuantumComputation, inputState, nullptr));
         ASSERT_EQ(actualOutputState.size(), expectedOutputState.size());
 
         // We are assuming that the indices of the ancilla qubits are larger than the one of the inputs/output qubits and that the user is not interested in the value of the ancillary qubits.
@@ -171,9 +175,9 @@ protected:
         }
     }
 
-    static void parseInputCircuitFromString(const std::string_view& stringifiedSyrecProgram, syrec::Program& parserInstance, const std::optional<syrec::ReadProgramSettings>& optionalParserConfiguration = std::nullopt) {
+    static void parseInputCircuitFromString(const std::string_view& stringifiedSyrecProgram, syrec::Program& parserInstance, const std::optional<syrec::ConfigurableOptions>& optionalParserConfiguration = std::nullopt) {
         std::string errorsOfReadInputCircuit;
-        ASSERT_NO_FATAL_FAILURE(errorsOfReadInputCircuit = parserInstance.readFromString(stringifiedSyrecProgram, optionalParserConfiguration.value_or(syrec::ReadProgramSettings())));
+        ASSERT_NO_FATAL_FAILURE(errorsOfReadInputCircuit = parserInstance.readFromString(stringifiedSyrecProgram, optionalParserConfiguration.value_or(syrec::ConfigurableOptions())));
         ASSERT_TRUE(errorsOfReadInputCircuit.empty()) << "Expected no errors in input circuits but actually found the following: " << errorsOfReadInputCircuit;
     }
 

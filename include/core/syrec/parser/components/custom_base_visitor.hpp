@@ -11,12 +11,12 @@
 #pragma once
 
 #include "Token.h"
+#include "core/configurable_options.hpp"
 #include "core/syrec/expression.hpp"
 #include "core/syrec/number.hpp"
 #include "core/syrec/parser/utils/custom_error_messages.hpp"
 #include "core/syrec/parser/utils/parser_messages_container.hpp"
 #include "core/syrec/parser/utils/symbolTable/base_symbol_table.hpp"
-#include "core/syrec/program.hpp"
 #include "core/syrec/variable.hpp"
 
 #include <charconv>
@@ -61,8 +61,8 @@ namespace syrec_parser {
      */
     class CustomBaseVisitor {
     public:
-        CustomBaseVisitor(const std::shared_ptr<ParserMessagesContainer>& sharedGeneratedMessageContainerInstance, const std::shared_ptr<utils::BaseSymbolTable>& sharedSymbolTableInstance, const syrec::ReadProgramSettings& parserConfiguration):
-            sharedGeneratedMessageContainerInstance(sharedGeneratedMessageContainerInstance), symbolTable(sharedSymbolTableInstance), parserConfiguration(parserConfiguration) {}
+        CustomBaseVisitor(const std::shared_ptr<ParserMessagesContainer>& sharedGeneratedMessageContainerInstance, const std::shared_ptr<utils::BaseSymbolTable>& sharedSymbolTableInstance, syrec::ConfigurableOptions parserConfiguration):
+            sharedGeneratedMessageContainerInstance(sharedGeneratedMessageContainerInstance), symbolTable(sharedSymbolTableInstance), parserConfiguration(std::move(parserConfiguration)) {}
 
     protected:
         static constexpr unsigned int DEFAULT_EXPRESSION_BITWIDTH   = 32;
@@ -70,7 +70,7 @@ namespace syrec_parser {
 
         std::shared_ptr<ParserMessagesContainer> sharedGeneratedMessageContainerInstance;
         std::shared_ptr<utils::BaseSymbolTable>  symbolTable;
-        syrec::ReadProgramSettings               parserConfiguration;
+        syrec::ConfigurableOptions               parserConfiguration;
 
         [[nodiscard]] static Message::Position mapTokenPositionToMessagePosition(const antlr4::Token& token) {
             return Message::Position(token.getLine(), token.getCharPositionInLine());
