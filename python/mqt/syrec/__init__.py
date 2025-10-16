@@ -43,6 +43,7 @@ from .pysyrec import (
     program,
     qubit_inlining_stack,
     qubit_inlining_stack_entry,
+    qubit_label_type,
     simple_simulation,
     statistics,
 )
@@ -59,6 +60,7 @@ __all__ = [
     "program",
     "qubit_inlining_stack",
     "qubit_inlining_stack_entry",
+    "qubit_label_type",
     "simple_simulation",
     "statistics",
 ]

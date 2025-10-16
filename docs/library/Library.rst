@@ -8,6 +8,7 @@ Library
     ConfigurableOptions
     NBitValuesContainer
     Parser
-    QubitInliningInformation
+    InlinedQubitInformation
     Simulation
+    Statistics
     Synthesis

@@ -1,4 +1,4 @@
-QubitInliningInformation
+InlinedQubitInformation
 ========================
 
 Stores debug information about the ancillary and local module variable qubits that can be used to determine the origin of the qubit in the SyReC program or to determine the user declared identifier of the associated variable for a qubit. This information is not available for the parameters of a SyReC module.

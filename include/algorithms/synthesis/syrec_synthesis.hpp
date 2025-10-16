@@ -28,11 +28,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <map>
 #include <memory>
 #include <optional>
 #include <stack>
-#include <string>
 #include <string_view>
 #include <variant>
 #include <vector>
@@ -53,9 +51,7 @@ namespace syrec {
         explicit SyrecSynthesis(AnnotatableQuantumComputation& annotatableQuantumComputation);
         virtual ~SyrecSynthesis() = default;
 
-        [[nodiscard]] bool addVariables(const Variable::vec& variables) const;
-        void               setMainModule(const Module::ptr& mainModule);
-
+        void                         setMainModule(const Module::ptr& mainModule);
         [[maybe_unused]] static bool synthesize(SyrecSynthesis* synthesizer, const Program& program, const ConfigurableOptions& settings = ConfigurableOptions(), Statistics* optionalRecordedStatistics = nullptr);
 
     protected:
@@ -148,8 +144,7 @@ namespace syrec {
          * @remark The truncation of compile time constant integer values/bitwidth used in subexpressions of the expression to simplify is also considered a simplification since this will help to reduce the number of ancillary qubits needed to synthesis the integer value.
          */
         [[nodiscard]] static std::optional<Expression::ptr> performCompileTimeSimplificationsOfExpression(const Expression::ptr& expression, const Number::LoopVariableMapping& loopVariableValueLookup);
-
-        [[nodiscard]] static std::optional<qc::Qubit> addVariable(AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<unsigned>& dimensions, const Variable::ptr& var, const std::string& arraystr, const std::optional<QubitInliningStack::ptr>& currentModuleCallStack);
+        [[nodiscard]] bool                                  createQuantumRegistersForSyrecVariables(const Variable::vec& variables) const;
 
         /**
          * Get the qubits accessed by the defined variable access.
@@ -163,8 +158,8 @@ namespace syrec {
          */
         [[nodiscard]] bool getVariables(const VariableAccess::ptr& variableAccess, std::vector<qc::Qubit>& lines);
 
-        [[nodiscard]] std::optional<qc::Qubit> getConstantLine(bool value, const std::optional<QubitInliningStack::ptr>& inlinedQubitModuleCallStack);
-        [[nodiscard]] bool                     getConstantLines(unsigned bitwidth, unsigned value, std::vector<qc::Qubit>& lines);
+        [[nodiscard]] std::optional<qc::Qubit> getConstantLine(bool value, const std::optional<QubitInliningStack::ptr>& inlinedQubitModuleCallStack) const;
+        [[nodiscard]] bool                     getConstantLines(unsigned bitwidth, unsigned value, std::vector<qc::Qubit>& lines) const;
 
         [[nodiscard]] static std::optional<AssignStatement::AssignOperation>  tryMapBinaryToAssignmentOperation(BinaryExpression::BinaryOperation binaryOperation) noexcept;
         [[nodiscard]] static std::optional<BinaryExpression::BinaryOperation> tryMapAssignmentToBinaryOperation(AssignStatement::AssignOperation assignOperation) noexcept;
@@ -275,8 +270,5 @@ namespace syrec {
         std::unique_ptr<FirstVariableQubitOffsetLookup>     firstVariableQubitOffsetLookup;
 
         utils::IntegerConstantTruncationOperation integerConstantTruncationOperation = utils::IntegerConstantTruncationOperation::BitwiseAnd;
-
-    private:
-        std::map<bool, std::vector<qc::Qubit>> freeConstLinesMap;
     };
 } // namespace syrec

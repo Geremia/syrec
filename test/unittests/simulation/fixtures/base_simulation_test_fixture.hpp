@@ -17,13 +17,16 @@
 #include "core/n_bit_values_container.hpp"
 #include "core/statistics.hpp"
 #include "core/syrec/program.hpp"
+#include "qasm3/Importer.hpp"
 
 #include <cstddef>
 #include <exception>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <ios>
 #include <nlohmann/json.hpp>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
 
@@ -77,6 +80,7 @@ public:
         const std::string& stringifiedInputCircuit = jsonDataOfTestCase[jsonKeyForInputCircuit].template get<std::string>();
         ASSERT_NO_FATAL_FAILURE(parseInputCircuitFromString(stringifiedInputCircuit, syrecProgramInstance));
         ASSERT_TRUE(performProgramSynthesis(syrecProgramInstance, annotatableQuantumComputation, optionalSynthesisSettings, optionalRecordedStatistics)) << "Synthesis of input circuit was not successful";
+        ASSERT_NO_FATAL_FAILURE(assertExportToValidQasm3AndReimportSuccessful(annotatableQuantumComputation));
 
         const json& jsonDataOfSimulationRuns = jsonDataOfTestCase[jsonKeyForSimulationRuns];
         for (const auto& jsonDataOfSimulationRun: jsonDataOfSimulationRuns) {
@@ -94,6 +98,21 @@ public:
 
     [[nodiscard]] static std::string getNameOfCurrentlyExecutedTest() {
         return testing::UnitTest::GetInstance()->current_test_info()->name();
+    }
+
+    [[nodiscard]] static bool performProgramSynthesis(const syrec::Program& program, syrec::AnnotatableQuantumComputation& annotatableQuantumComputation, const std::optional<syrec::ConfigurableOptions>& optionalSynthesisSettings = std::nullopt, syrec::Statistics* optionalRecordedStatistics = nullptr) {
+        const auto synthesisSettings = optionalSynthesisSettings.value_or(syrec::ConfigurableOptions());
+        if constexpr (std::is_same_v<T, syrec::CostAwareSynthesis>) {
+            return syrec::CostAwareSynthesis::synthesize(annotatableQuantumComputation, program, synthesisSettings, optionalRecordedStatistics);
+        } else {
+            return syrec::LineAwareSynthesis::synthesize(annotatableQuantumComputation, program, synthesisSettings, optionalRecordedStatistics);
+        }
+    }
+
+    static void parseInputCircuitFromString(const std::string_view& stringifiedSyrecProgram, syrec::Program& parserInstance, const std::optional<syrec::ConfigurableOptions>& optionalParserConfiguration = std::nullopt) {
+        std::string errorsOfReadInputCircuit;
+        ASSERT_NO_FATAL_FAILURE(errorsOfReadInputCircuit = parserInstance.readFromString(stringifiedSyrecProgram, optionalParserConfiguration.value_or(syrec::ConfigurableOptions())));
+        ASSERT_TRUE(errorsOfReadInputCircuit.empty()) << "Expected no errors in input circuits but actually found the following: " << errorsOfReadInputCircuit;
     }
 
 protected:
@@ -131,13 +150,19 @@ protected:
         }
     }
 
-    [[nodiscard]] static bool performProgramSynthesis(const syrec::Program& program, syrec::AnnotatableQuantumComputation& annotatableQuantumComputation, const std::optional<syrec::ConfigurableOptions>& optionalSynthesisSettings = std::nullopt, syrec::Statistics* optionalRecordedStatistics = nullptr) {
-        const auto synthesisSettings = optionalSynthesisSettings.value_or(syrec::ConfigurableOptions());
-        if constexpr (std::is_same_v<T, syrec::CostAwareSynthesis>) {
-            return syrec::CostAwareSynthesis::synthesize(annotatableQuantumComputation, program, synthesisSettings, optionalRecordedStatistics);
-        } else {
-            return syrec::LineAwareSynthesis::synthesize(annotatableQuantumComputation, program, synthesisSettings, optionalRecordedStatistics);
-        }
+    // Check that dump of annotatable quantum computation create valid OpenQASM 3.0 program (see issue #360).
+    static void assertExportToValidQasm3AndReimportSuccessful(const syrec::AnnotatableQuantumComputation& annotatableQuantumComputation) {
+        std::stringstream exportBufferForQasm3Representation;
+        ASSERT_NO_FATAL_FAILURE(annotatableQuantumComputation.dumpOpenQASM(exportBufferForQasm3Representation)) << "Failed to dump OpenQASM 3.0 representation of annotatable quantum computation";
+
+        // std::ostream and std::istream use same position for writing and reading so after the export was finished (i.e. the std::ostream was written) we need to reset the read position to the begin of the stream
+        exportBufferForQasm3Representation.seekg(0U, std::ios_base::beg);
+
+        qc::QuantumComputation importedQuantumComputation;
+        ASSERT_NO_FATAL_FAILURE(importedQuantumComputation = qasm3::Importer::import(exportBufferForQasm3Representation)) << "Failed to import previously dumped OpenQASM 3.0 representation of annotatable quantum computation";
+        ASSERT_EQ(annotatableQuantumComputation.getNops(), importedQuantumComputation.getNops()) << "Number of operations of imported quantum computation did not match number of operations of exported annotatable quantum computation";
+        ASSERT_EQ(annotatableQuantumComputation.getNqubits(), importedQuantumComputation.getNqubits()) << "Number of qubits of imported quantum computation did not match qubits of operations of exported annotatable quantum computation";
+        ASSERT_EQ(annotatableQuantumComputation.getQuantumRegisters().size(), importedQuantumComputation.getQuantumRegisters().size()) << "Number of quantum registers of imported quantum computation did not match number of quantum registers of exported annotatable quantum computation";
     }
 
     static void assertSimulationResultForStateMatchesExpectedOne(const syrec::AnnotatableQuantumComputation& annotatableQuantumComputation, const syrec::NBitValuesContainer& inputState, const syrec::NBitValuesContainer& expectedOutputState, const std::size_t userDefinedNumQubitsToCheck) {
@@ -173,12 +198,6 @@ protected:
                 ASSERT_EQ(stringifiedBinaryState[i], '0') << "Only the characters '0' and '1' are allowed when defining the state of an output";
             }
         }
-    }
-
-    static void parseInputCircuitFromString(const std::string_view& stringifiedSyrecProgram, syrec::Program& parserInstance, const std::optional<syrec::ConfigurableOptions>& optionalParserConfiguration = std::nullopt) {
-        std::string errorsOfReadInputCircuit;
-        ASSERT_NO_FATAL_FAILURE(errorsOfReadInputCircuit = parserInstance.readFromString(stringifiedSyrecProgram, optionalParserConfiguration.value_or(syrec::ConfigurableOptions())));
-        ASSERT_TRUE(errorsOfReadInputCircuit.empty()) << "Expected no errors in input circuits but actually found the following: " << errorsOfReadInputCircuit;
     }
 
     std::string jsonKeyForInputCircuit                 = "inputCircuit";

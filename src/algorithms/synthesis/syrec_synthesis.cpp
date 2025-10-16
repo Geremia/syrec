@@ -121,7 +121,11 @@ namespace {
         return binaryOperation == syrec::BinaryExpression::BinaryOperation::LogicalAnd || binaryOperation == syrec::BinaryExpression::BinaryOperation::LogicalOr;
     }
 
-    [[nodiscard]] std::size_t determinePositionOfFirstOneBitInValueStartingFromLSB(unsigned value) {
+    [[nodiscard]] std::optional<std::size_t> determinePositionOfFirstOneBitInValueStartingFromLSB(unsigned value) {
+        if (value == 0) {
+            return std::nullopt;
+        }
+
         // We could use the https://en.cppreference.com/w/cpp/numeric/countr_zero.html function to implement the same functionality. However, said function will be detected as a typo by the pre-commit checks.
         // To fix this false positive typo one would have to add a separate configuration file for the typo checks (see https://github.com/crate-ci/typos/discussions/907). One could also use std::log2(...)
         // but using such a complex function for rather simple functionality seems overkill.
@@ -138,8 +142,6 @@ namespace syrec {
     // Helper Functions for the synthesis methods
     SyrecSynthesis::SyrecSynthesis(AnnotatableQuantumComputation& annotatableQuantumComputation):
         annotatableQuantumComputation(annotatableQuantumComputation) {
-        freeConstLinesMap.try_emplace(false /* emplacing a default constructed object */);
-        freeConstLinesMap.try_emplace(true /* emplacing a default constructed object */);
         statementExecutionOrderStack   = std::make_unique<StatementExecutionOrderStack>();
         firstVariableQubitOffsetLookup = std::make_unique<FirstVariableQubitOffsetLookup>();
     }
@@ -149,31 +151,24 @@ namespace syrec {
         modules.push(mainModule);
     }
 
-    bool SyrecSynthesis::addVariables(const Variable::vec& variables) const {
-        // We only want to record inlining information for qubits that are actually inlined (i.e. variables of type 'wire' and 'state').
-        // Note that all variables added in this call shared the same inlining stack thus we reuse the latter when adding the former.
-        const bool                                   isAnyVarALocalModuleVarBasedOnVarType = std::ranges::any_of(variables, [](const Variable::ptr& variable) { return variable->type == Variable::Type::Wire || variable->type == Variable::Type::State; });
-        const std::optional<QubitInliningStack::ptr> inlineStack                           = isAnyVarALocalModuleVarBasedOnVarType ? getLastCreatedModuleCallStackInstance() : std::nullopt;
-        bool                                         couldQubitsForVariablesBeAdded        = shouldQubitInlineInformationBeRecorded() && isAnyVarALocalModuleVarBasedOnVarType ? inlineStack.has_value() : true;
-
-        for (std::size_t i = 0; i < variables.size() && couldQubitsForVariablesBeAdded; ++i) {
-            const auto& variable = variables[i];
-            if (const std::optional<qc::Qubit> firstQubitOfVariable = variable != nullptr ? addVariable(annotatableQuantumComputation, variable->dimensions, variable, std::string(), inlineStack) : std::nullopt; firstQubitOfVariable.has_value()) {
-                if (firstVariableQubitOffsetLookup == nullptr || !firstVariableQubitOffsetLookup->registerOrUpdateOffsetToFirstQubitOfVariableInCurrentScope(variable->name, *firstQubitOfVariable)) {
-                    std::cerr << "Failed to register offset to first qubit of variable " << variable->name << "\n";
-                    couldQubitsForVariablesBeAdded = false;
-                }
-            } else {
-                std::cerr << "Failed to register offset to first qubit of variable due to variable being null\n";
-                couldQubitsForVariablesBeAdded = false;
-            }
-        }
-        return couldQubitsForVariablesBeAdded;
-    }
-
     bool SyrecSynthesis::synthesize(SyrecSynthesis* synthesizer, const Program& program, const ConfigurableOptions& settings, Statistics* optionalRecordedStatistics) {
+        if (synthesizer == nullptr) {
+            std::cerr << "Please use a valid synthesizer instance when trying to synthesis a SyReC program\n";
+            return false;
+        }
+
+        if (synthesizer->annotatableQuantumComputation.getNops() != 0 || synthesizer->annotatableQuantumComputation.getNqubits() != 0) {
+            std::cerr << "Annotatable quantum computation must be empty prior to the synthesis of a SyReC program\n";
+            return false;
+        }
+
         if (synthesizer->statementExecutionOrderStack->getCurrentAggregateStatementExecutionOrderState() != StatementExecutionOrderStack::StatementExecutionOrder::Sequential) {
             std::cerr << "Execution order at start of synthesis should be sequential\n";
+            return false;
+        }
+
+        if (synthesizer->firstVariableQubitOffsetLookup == nullptr) {
+            std::cerr << "Internal lookup for offsets to first qubits of variables was not initialized correctly\n";
             return false;
         }
 
@@ -248,32 +243,22 @@ namespace syrec {
             synthesizer->moduleCallStackInstances->emplace_back(mainModuleInlineStack);
         }
 
-        if (synthesizer->firstVariableQubitOffsetLookup == nullptr) {
-            std::cerr << "Internal lookup for offsets to first qubits of variables was not correctly initialized\n";
-            return false;
-        }
-
         synthesizer->firstVariableQubitOffsetLookup->openNewVariableQubitOffsetScope();
-        // create lines for global variables
-        if (!synthesizer->addVariables(main->parameters)) {
+        if (!synthesizer->createQuantumRegistersForSyrecVariables(main->parameters)) {
             std::cerr << "Failed to create qubits for parameters of main module of SyReC program\n";
             return false;
         }
-        if (!synthesizer->addVariables(main->variables)) {
+
+        if (!synthesizer->createQuantumRegistersForSyrecVariables(main->variables)) {
             std::cerr << "Failed to create qubits for local variables of main module of SyReC program\n";
             return false;
         }
 
         // synthesize the statements
         const auto synthesisOfMainModuleOk = synthesizer->onModule(main);
-        for (const auto& ancillaryQubit: synthesizer->annotatableQuantumComputation.getAddedPreliminaryAncillaryQubitIndices()) {
-            if (!synthesizer->annotatableQuantumComputation.promotePreliminaryAncillaryQubitToDefinitiveAncillary(ancillaryQubit)) {
-                std::cerr << "Failed to mark qubit" << std::to_string(ancillaryQubit) << " as ancillary qubit\n";
-                return false;
-            }
-        }
+        synthesizer->annotatableQuantumComputation.promotePreliminaryAncillaryQubitsToDefinitiveAncillaryQubits();
 
-        if (!synthesizer->firstVariableQubitOffsetLookup->closeVariableQubitOffsetScope()) {
+        if (synthesisOfMainModuleOk && !synthesizer->firstVariableQubitOffsetLookup->closeVariableQubitOffsetScope()) {
             std::cerr << "Failed to close qubit offset scope for parameters and local variables during cleanup after synthesis of main module " << main->name << "\n";
             return false;
         }
@@ -1410,6 +1395,51 @@ namespace syrec {
         return std::nullopt;
     }
 
+    bool SyrecSynthesis::createQuantumRegistersForSyrecVariables(const Variable::vec& variables) const {
+        if (firstVariableQubitOffsetLookup == nullptr) {
+            return false;
+        }
+
+        for (const auto& variable: variables) {
+            if (variable == nullptr) {
+                return false;
+            }
+
+            const bool                                                            areQubitsCreatedForVariableConsideredGarbage = variable->type == Variable::Type::In || variable->type == Variable::Type::Wire;
+            std::optional<AnnotatableQuantumComputation::InlinedQubitInformation> optionalQubitInliningInformation;
+
+            std::string quantumRegisterLabel = variable->name;
+            if (variable->type == Variable::Type::Wire || variable->type == Variable::Type::State) {
+                // To prevent name clashes between the identifiers of the local variables of a module with any active variable, a transformation of the local variable identifier to '__q<curr_num_qubits>' is performed and used
+                // to identify the variable in the quantum computation with the prefix portion <curr_num_qubits> being equal to the current number of qubits in the quantum computation.
+                // The 'original' identifier of the local variable is stored as the user declared label in the inline qubit information of the qubits of the variable.
+                // Note that assuming that the local module variable contains n qubits then instead of creating n 1-qubit quantum registers, one n-qubit quantum register will be created using the internal identifier of the local variable
+                // as its identifier.
+                //
+                // One caveat to remember is that the generated quantum computation can only be converted to its OpenQASM 3.0 representation but not the OpenQASM 2.0 due to the chosen internal variable identifier prefix '__q<curr_num_qubits>'
+                // not defining a valid OpenQASM 2.0 quantum register identifier.
+                quantumRegisterLabel = InternalQubitLabelBuilder::buildNonAncillaryQubitLabel(annotatableQuantumComputation.getQuantumRegisters().size());
+
+                optionalQubitInliningInformation                         = AnnotatableQuantumComputation::InlinedQubitInformation();
+                optionalQubitInliningInformation->userDeclaredQubitLabel = variable->name;
+                optionalQubitInliningInformation->inlineStack            = getLastCreatedModuleCallStackInstance();
+            }
+
+            const auto                     variableLayoutInformation          = AnnotatableQuantumComputation::AssociatedVariableLayoutInformation({.numValuesPerDimension = variable->dimensions, .bitwidth = variable->bitwidth});
+            const std::optional<qc::Qubit> indexToFirstQubitOfQuantumRegister = annotatableQuantumComputation.addQuantumRegisterForSyrecVariable(quantumRegisterLabel, variableLayoutInformation, areQubitsCreatedForVariableConsideredGarbage, optionalQubitInliningInformation);
+            if (!indexToFirstQubitOfQuantumRegister.has_value()) {
+                std::cerr << "Failed to add quantum register for SyReC variable '" << variable->name << "'\n";
+                return false;
+            }
+
+            if (!firstVariableQubitOffsetLookup->registerOrUpdateOffsetToFirstQubitOfVariableInCurrentScope(variable->name, *indexToFirstQubitOfQuantumRegister)) {
+                std::cerr << "Failed to register offset to first qubit of quantum register for SyReC variable '" << variable->name << "'\n";
+                return false;
+            }
+        }
+        return true;
+    }
+
     bool SyrecSynthesis::getVariables(const VariableAccess::ptr& variableAccess, std::vector<qc::Qubit>& lines) {
         const std::optional<EvaluatedVariableAccess> evaluatedVariableAccess = evaluateAndValidateVariableAccess(variableAccess, loopMap, firstVariableQubitOffsetLookup);
         if (!evaluatedVariableAccess.has_value()) {
@@ -1427,51 +1457,44 @@ namespace syrec {
         return synthesisOfVariableAccessOk;
     }
 
-    std::optional<qc::Qubit> SyrecSynthesis::getConstantLine(bool value, const std::optional<QubitInliningStack::ptr>& inlinedQubitModuleCallStack) {
-        qc::Qubit constLine = 0U;
-
-        if (!freeConstLinesMap[value].empty()) {
-            constLine = freeConstLinesMap[value].back();
-            freeConstLinesMap[value].pop_back();
-        } else if (!freeConstLinesMap[!value].empty()) {
-            constLine = freeConstLinesMap[!value].back();
-            freeConstLinesMap[!value].pop_back();
-            if (!annotatableQuantumComputation.addOperationsImplementingNotGate(constLine)) {
-                return std::nullopt;
-            }
-        } else {
-            const auto        expectedQubitIndex  = static_cast<qc::Qubit>(annotatableQuantumComputation.getNqubits());
-            const std::string qubitLabel          = InternalQubitLabelBuilder::buildAncillaryQubitLabel(expectedQubitIndex, value);
-            auto              inliningInformation = AnnotatableQuantumComputation::InlinedQubitInformation();
-            if (shouldQubitInlineInformationBeRecorded()) {
-                inliningInformation.inlineStack = inlinedQubitModuleCallStack;
-            }
-
-            const std::optional<qc::Qubit> actualQubitIndex = annotatableQuantumComputation.addPreliminaryAncillaryQubit(qubitLabel, value, inliningInformation);
-            if (!actualQubitIndex.has_value() || *actualQubitIndex != expectedQubitIndex) {
-                return std::nullopt;
-            }
-            constLine = expectedQubitIndex;
+    std::optional<qc::Qubit> SyrecSynthesis::getConstantLine(bool value, const std::optional<QubitInliningStack::ptr>& inlinedQubitModuleCallStack) const {
+        const auto        expectedAncillaryQubitIndex = static_cast<qc::Qubit>(annotatableQuantumComputation.getNqubits());
+        const std::string quantumRegisterLabel        = InternalQubitLabelBuilder::buildAncillaryQubitLabel(annotatableQuantumComputation.getQuantumRegisters().size());
+        auto              inliningInformation         = AnnotatableQuantumComputation::InlinedQubitInformation();
+        if (shouldQubitInlineInformationBeRecorded()) {
+            inliningInformation.inlineStack = inlinedQubitModuleCallStack;
         }
-        return constLine;
+
+        const std::optional<qc::Qubit> actualAncillaryQubitIndex = annotatableQuantumComputation.addPreliminaryAncillaryRegisterOrAppendToAdjacentOne(quantumRegisterLabel, {value}, inliningInformation);
+        return actualAncillaryQubitIndex.has_value() && *actualAncillaryQubitIndex == expectedAncillaryQubitIndex ? std::make_optional(expectedAncillaryQubitIndex) : std::nullopt;
     }
 
-    bool SyrecSynthesis::getConstantLines(unsigned bitwidth, qc::Qubit value, std::vector<qc::Qubit>& lines) {
+    bool SyrecSynthesis::getConstantLines(const unsigned bitwidth, const qc::Qubit value, std::vector<qc::Qubit>& lines) const {
         assert(bitwidth <= 32);
+        if (bitwidth == 0) {
+            return false;
+        }
 
         // Ancillary qubits generated for an integer larger than 1 all share the same origin and thus will reuse the same module call stack in its inline information
-        const std::optional<QubitInliningStack::ptr> sharedAncillaryQubitModuleCallStack  = bitwidth > 0 ? getLastCreatedModuleCallStackInstance() : std::nullopt;
-        bool                                         couldQubitsForConstantLinesBeFetched = shouldQubitInlineInformationBeRecorded() ? sharedAncillaryQubitModuleCallStack.has_value() : true;
-
-        for (unsigned i = 0U; i < bitwidth && couldQubitsForConstantLinesBeFetched; ++i) {
-            const std::optional<qc::Qubit> ancillaryQubitIndex = getConstantLine((value & (1 << i)) != 0, sharedAncillaryQubitModuleCallStack);
-            if (ancillaryQubitIndex.has_value()) {
-                lines.emplace_back(*ancillaryQubitIndex);
-            } else {
-                couldQubitsForConstantLinesBeFetched = false;
-            }
+        auto initialValuesOfAncillaryQubits = std::vector(bitwidth, false);
+        for (std::size_t i = 0; i < initialValuesOfAncillaryQubits.size(); ++i) {
+            initialValuesOfAncillaryQubits[i] = (value & (1U << i)) != 0U;
         }
-        return couldQubitsForConstantLinesBeFetched;
+
+        const auto        expectedQubitIndexForFirstAddedAncillaryQubit = static_cast<qc::Qubit>(annotatableQuantumComputation.getNqubits());
+        const std::string quantumRegisterLabel                          = InternalQubitLabelBuilder::buildAncillaryQubitLabel(annotatableQuantumComputation.getQuantumRegisters().size());
+        auto              inliningInformation                           = AnnotatableQuantumComputation::InlinedQubitInformation();
+        inliningInformation.inlineStack                                 = getLastCreatedModuleCallStackInstance();
+
+        const std::optional<qc::Qubit> actualQubitIndexForFirstAddedAncillaryQubit = annotatableQuantumComputation.addPreliminaryAncillaryRegisterOrAppendToAdjacentOne(quantumRegisterLabel, initialValuesOfAncillaryQubits, inliningInformation);
+        const bool                     couldAncillaryQubitsBeAdded                 = actualQubitIndexForFirstAddedAncillaryQubit.has_value() && *actualQubitIndexForFirstAddedAncillaryQubit == expectedQubitIndexForFirstAddedAncillaryQubit;
+
+        const qc::Qubit firstGeneratedAncillaryQubitIndex = *actualQubitIndexForFirstAddedAncillaryQubit;
+        const qc::Qubit lastGeneratedAncillaryQubitIndex  = firstGeneratedAncillaryQubitIndex + (bitwidth - 1U);
+        for (qc::Qubit generatedAncillaryQubitIndex = firstGeneratedAncillaryQubitIndex; generatedAncillaryQubitIndex <= lastGeneratedAncillaryQubitIndex; ++generatedAncillaryQubitIndex) {
+            lines.emplace_back(generatedAncillaryQubitIndex);
+        }
+        return couldAncillaryQubitsBeAdded;
     }
 
     std::optional<AssignStatement::AssignOperation> SyrecSynthesis::tryMapBinaryToAssignmentOperation(BinaryExpression::BinaryOperation binaryOperation) noexcept {
@@ -1500,49 +1523,6 @@ namespace syrec {
             default:
                 return std::nullopt;
         }
-    }
-
-    std::optional<qc::Qubit> SyrecSynthesis::addVariable(AnnotatableQuantumComputation& annotatableQuantumComputation, const std::vector<unsigned>& dimensions, const Variable::ptr& var, const std::string& arraystr, const std::optional<QubitInliningStack::ptr>& currentModuleCallStack) {
-        bool                     couldQubitsForVariableBeAdded = true;
-        std::optional<qc::Qubit> firstQubitOfVariable;
-
-        const auto currNumQubits = annotatableQuantumComputation.getNqubits();
-        if (dimensions.empty()) {
-            for (unsigned i = 0U; i < var->bitwidth && couldQubitsForVariableBeAdded; ++i) {
-                std::string                                                           internalQubitLabel     = var->name;
-                std::string                                                           userDeclaredQubitLabel = var->name;
-                const bool                                                            isGarbageQubit         = var->type == Variable::Type::In || var->type == Variable::Type::Wire;
-                std::optional<AnnotatableQuantumComputation::InlinedQubitInformation> optionalQubitInliningInformation;
-
-                if (var->type == Variable::Type::Wire || var->type == Variable::Type::State) {
-                    // To prevent name clashes when local module variables are inlined at the callsite, all local variable names are transformed to '__q<curr_num_qubits>' and an alias is created and stored
-                    // in the annotatable quantum computation. The <curr_num_qubits> portion of the new variable name is the number of qubits prior to the addition of any variable in this call so that the qubits
-                    // created for each value of a dimension of a variable share the same name prefix (i.e. the variable 'wire a[2](2)' will cause the generation of the qubits '__q0[0].0', '__q0[0].1','__q0[1].0', '__q0[1].0')
-                    internalQubitLabel = InternalQubitLabelBuilder::buildNonAncillaryQubitLabel(currNumQubits);
-                }
-                internalQubitLabel += arraystr + "." + std::to_string(i);
-                userDeclaredQubitLabel += arraystr + "." + std::to_string(i);
-
-                if (internalQubitLabel != userDeclaredQubitLabel) {
-                    optionalQubitInliningInformation                         = AnnotatableQuantumComputation::InlinedQubitInformation();
-                    optionalQubitInliningInformation->userDeclaredQubitLabel = userDeclaredQubitLabel;
-                    optionalQubitInliningInformation->inlineStack            = currentModuleCallStack;
-                }
-                const std::optional<qc::Qubit> addedQubitIndex = annotatableQuantumComputation.addNonAncillaryQubit(internalQubitLabel, isGarbageQubit, optionalQubitInliningInformation);
-                couldQubitsForVariableBeAdded                  = addedQubitIndex.has_value();
-                firstQubitOfVariable                           = (!firstQubitOfVariable.has_value() && couldQubitsForVariableBeAdded) ? addedQubitIndex : firstQubitOfVariable;
-            }
-        } else {
-            const auto        len = static_cast<std::size_t>(dimensions.front());
-            const std::vector newDimensions(dimensions.begin() + 1U, dimensions.end());
-
-            for (std::size_t i = 0U; i < len && couldQubitsForVariableBeAdded; ++i) {
-                const std::optional<qc::Qubit> addedQubitIndexForValueOfDimension = addVariable(annotatableQuantumComputation, newDimensions, var, arraystr + "[" + std::to_string(i) + "]", currentModuleCallStack);
-                couldQubitsForVariableBeAdded                                     = addedQubitIndexForValueOfDimension.has_value();
-                firstQubitOfVariable                                              = (!firstQubitOfVariable.has_value() && couldQubitsForVariableBeAdded) ? addedQubitIndexForValueOfDimension : firstQubitOfVariable;
-            }
-        }
-        return firstQubitOfVariable;
     }
 
     std::optional<QubitInliningStack::ptr> SyrecSynthesis::getLastCreatedModuleCallStackInstance() const {
@@ -1636,7 +1616,8 @@ namespace syrec {
         }
 
         // 2. Create new lines for the module's variables
-        if (!addVariables(targetModule->variables)) {
+        if (!createQuantumRegistersForSyrecVariables(targetModule->variables)) {
+            std::cerr << "Failed to create quantum registers for variables of called module " << targetModule->name << "\n";
             return false;
         }
 
@@ -1674,11 +1655,12 @@ namespace syrec {
                 if (const auto& reverseStatement = (*it)->reverse(); reverseStatement.has_value()) {
                     synthesisOfModuleBodyOk = processStatement(*reverseStatement);
                 } else {
-                    const auto offsetFromLastStmtToCurrentlyProcessedOneInUncalledModule = static_cast<std::size_t>(std::distance(statements.rend(), it));
+                    const auto        offsetFromLastStmtToCurrentlyProcessedOneInUncalledModule = static_cast<std::size_t>(std::distance(statements.rbegin(), it));
+                    const std::size_t idxOfStatementInSequentialExecutionOrder                  = statements.size() - 1U - offsetFromLastStmtToCurrentlyProcessedOneInUncalledModule;
                     if (callStmt != nullptr) {
-                        std::cerr << "Failed to create inverse of statement at index " << std::to_string(statements.size() - offsetFromLastStmtToCurrentlyProcessedOneInUncalledModule) << " in body of called module " << targetModule->name << "(CALL @ " << std::to_string(it->get()->lineNumber) << ")";
+                        std::cerr << "Failed to create inverse of statement at index " << std::to_string(idxOfStatementInSequentialExecutionOrder) << " in body of called module " << targetModule->name << "(CALL @ " << std::to_string(it->get()->lineNumber) << ")";
                     } else {
-                        std::cerr << "Failed to create inverse of statement at index " << std::to_string(statements.size() - offsetFromLastStmtToCurrentlyProcessedOneInUncalledModule) << " in body of uncalled module " << targetModule->name << "(UNCALL @ " << std::to_string(it->get()->lineNumber) << ")";
+                        std::cerr << "Failed to create inverse of statement at index " << std::to_string(idxOfStatementInSequentialExecutionOrder) << " in body of uncalled module " << targetModule->name << "(UNCALL @ " << std::to_string(it->get()->lineNumber) << ")";
                     }
                     synthesisOfModuleBodyOk = false;
                 }
@@ -1925,9 +1907,9 @@ namespace syrec {
                     qubitsStoringSymbolicValueOfSummandOfDimensionForUnrolledIndex = qubitsStoringSynthesizedExprOfDimension;
                 } else if (std::has_single_bit(offsetToNextElementOfDimensionInNumberOfArrayElements)) {
                     numOperationsPriorToSynthesisOfSummandInUnrolledIndexSum = annotatableQuantumComputation.getNops();
-                    const auto shiftAmount                                   = static_cast<unsigned>(determinePositionOfFirstOneBitInValueStartingFromLSB(offsetToNextElementOfDimensionInNumberOfArrayElements));
-                    synthesisOk &= getConstantLines(numQubitsRequiredToStoreIndexToAnyElementInAccessedVariable, 0U, qubitsStoringSymbolicValueOfSummandOfDimensionForUnrolledIndex) &&
-                                   leftShift(annotatableQuantumComputation, qubitsStoringSymbolicValueOfSummandOfDimensionForUnrolledIndex, qubitsStoringSynthesizedExprOfDimension, shiftAmount);
+                    const auto shiftAmount                                   = static_cast<std::optional<unsigned>>(determinePositionOfFirstOneBitInValueStartingFromLSB(offsetToNextElementOfDimensionInNumberOfArrayElements));
+                    synthesisOk &= shiftAmount.has_value() && getConstantLines(numQubitsRequiredToStoreIndexToAnyElementInAccessedVariable, 0U, qubitsStoringSymbolicValueOfSummandOfDimensionForUnrolledIndex) &&
+                                   leftShift(annotatableQuantumComputation, qubitsStoringSymbolicValueOfSummandOfDimensionForUnrolledIndex, qubitsStoringSynthesizedExprOfDimension, *shiftAmount);
                     numOperationsAfterSynthesisOfSummandInUnrolledIndexSum = annotatableQuantumComputation.getNops();
                 } else {
                     numOperationsPriorToSynthesisOfSummandInUnrolledIndexSum = annotatableQuantumComputation.getNops();
