@@ -327,13 +327,15 @@ class SyReCEditor(QtWidgets.QWidget):  # type: ignore[misc]
         self.stat_action.triggered.connect(self.stat)
 
         self.configurable_parser_and_synthesis_options = syrec.configurable_options()
+        self.configurable_parser_and_synthesis_options.generate_quantum_operation_annotations = True
+
         self.configurable_parser_and_synthesis_options_update_button = QtWidgets.QPushButton(
             "Update configurable options", self
         )
         self.configurable_parser_and_synthesis_options_update_button.clicked.connect(self.update_configurable_options)
 
     def update_configurable_options(self) -> None:
-        update_configurable_options_modal = ConfigurableOptionsUpdated(
+        update_configurable_options_modal = ConfigurableOptionsUpdateDialog(
             self, self.configurable_parser_and_synthesis_options
         )
         update_configurable_options_modal.setWindowTitle("Update configurable options")
@@ -401,7 +403,9 @@ class SyReCEditor(QtWidgets.QWidget):  # type: ignore[misc]
                 self.build_failed(error_string)
             return
 
-        self.annotatable_quantum_computation = syrec.annotatable_quantum_computation()
+        self.annotatable_quantum_computation = syrec.annotatable_quantum_computation(
+            self.configurable_parser_and_synthesis_options.generate_quantum_operation_annotations
+        )
         if self.cost_aware_synthesis:
             syrec.cost_aware_synthesis(
                 self.annotatable_quantum_computation, self.prog, self.configurable_parser_and_synthesis_options
@@ -1081,14 +1085,17 @@ class CircuitQubitsInformationLookup(QtWidgets.QWidget):  # type: ignore[misc]
             )
 
 
-class ConfigurableOptionsUpdated(QtWidgets.QDialog):  # type: ignore[misc]
+class ConfigurableOptionsUpdateDialog(QtWidgets.QDialog):  # type: ignore[misc]
     def __init__(self, parent: QtWidgets.QWidget, configurable_settings: syrec.configurable_options) -> None:
         super().__init__()
         self.parent = parent
         self.configurable_parser_and_synthesis_options = configurable_settings
 
-        layout = QtWidgets.QVBoxLayout(self)
-        expected_main_module_identifier_layout = QtWidgets.QHBoxLayout()
+        dialog_layout = QtWidgets.QVBoxLayout()
+        configurable_options_grid_layout = QtWidgets.QGridLayout()
+
+        # layout = QtWidgets.QVBoxLayout(self)
+        expected_main_module_identifier_textbox_layout = QtWidgets.QHBoxLayout()
         expected_main_module_identifier_label = QtWidgets.QLabel("Expected main module identifier:")
         self.expected_main_module_identifier_textbox = QtWidgets.QLineEdit()
         if self.configurable_parser_and_synthesis_options is not None:
@@ -1102,10 +1109,12 @@ class ConfigurableOptionsUpdated(QtWidgets.QDialog):  # type: ignore[misc]
         module_identifier_validator = QtGui.QRegularExpressionValidator(module_identifier_regular_expr, self)
         self.expected_main_module_identifier_textbox.setValidator(module_identifier_validator)
 
-        expected_main_module_identifier_layout.addWidget(expected_main_module_identifier_label)
-        expected_main_module_identifier_layout.addWidget(self.expected_main_module_identifier_textbox)
+        configurable_options_grid_layout.addWidget(expected_main_module_identifier_label, 0, 0)
 
-        generate_inlined_qubit_debug_information_layout = QtWidgets.QHBoxLayout()
+        expected_main_module_identifier_textbox_layout.addWidget(self.expected_main_module_identifier_textbox)
+        expected_main_module_identifier_textbox_layout.addStretch()
+        configurable_options_grid_layout.addLayout(expected_main_module_identifier_textbox_layout, 0, 1)
+
         generate_inlined_qubit_debug_information_label = QtWidgets.QLabel("Generate inlined qubit debug information:")
         self.generate_inlined_qubit_debug_information_checkbox = QtWidgets.QCheckBox()
         if self.configurable_parser_and_synthesis_options.generate_inlined_qubit_debug_information:
@@ -1113,13 +1122,10 @@ class ConfigurableOptionsUpdated(QtWidgets.QDialog):  # type: ignore[misc]
         else:
             self.generate_inlined_qubit_debug_information_checkbox.setCheckState(QtCore.Qt.CheckState.Unchecked)
 
-        generate_inlined_qubit_debug_information_layout.addWidget(generate_inlined_qubit_debug_information_label)
-        generate_inlined_qubit_debug_information_layout.addWidget(
-            self.generate_inlined_qubit_debug_information_checkbox
-        )
-        generate_inlined_qubit_debug_information_layout.addStretch()
+        configurable_options_grid_layout.addWidget(generate_inlined_qubit_debug_information_label, 1, 0)
+        configurable_options_grid_layout.addWidget(self.generate_inlined_qubit_debug_information_checkbox, 1, 1)
 
-        integer_constant_truncation_operation_selection_layout = QtWidgets.QHBoxLayout()
+        integer_constant_truncation_operation_selection_combobox_layout = QtWidgets.QHBoxLayout()
         integer_constant_truncation_operation_combobox_label = QtWidgets.QLabel(
             "Integer constant truncation operation:"
         )
@@ -1146,15 +1152,17 @@ class ConfigurableOptionsUpdated(QtWidgets.QDialog):  # type: ignore[misc]
             to_be_selected_integer_constant_truncation_operation_idx
         )
 
-        integer_constant_truncation_operation_selection_layout.addWidget(
-            integer_constant_truncation_operation_combobox_label
-        )
-        integer_constant_truncation_operation_selection_layout.addWidget(
+        integer_constant_truncation_operation_selection_combobox_layout.addWidget(
             self.integer_constant_truncation_operation_combobox
         )
-        integer_constant_truncation_operation_selection_layout.addStretch()
+        integer_constant_truncation_operation_selection_combobox_layout.addStretch()
 
-        default_bitwidth_layout = QtWidgets.QHBoxLayout()
+        configurable_options_grid_layout.addWidget(integer_constant_truncation_operation_combobox_label, 2, 0)
+        configurable_options_grid_layout.addLayout(
+            integer_constant_truncation_operation_selection_combobox_layout, 2, 1
+        )
+
+        default_bitwidth_textbox_layout = QtWidgets.QHBoxLayout()
         default_bitwidth_label = QtWidgets.QLabel("Default signal bitwidth:")
         self.default_bitwidth_textbox = QtWidgets.QLineEdit()
         self.default_bitwidth_textbox.setText(str(self.configurable_parser_and_synthesis_options.default_bitwidth))
@@ -1162,25 +1170,34 @@ class ConfigurableOptionsUpdated(QtWidgets.QDialog):  # type: ignore[misc]
         # The value range of the default bitwidth is restricted due to python having no built-in unsigned integer type.
         self.default_bitwidth_textbox.setValidator(QtGui.QIntValidator(1, 2147483647))
 
-        default_bitwidth_layout.addWidget(default_bitwidth_label)
-        default_bitwidth_layout.addWidget(self.default_bitwidth_textbox)
-        default_bitwidth_layout.addStretch()
+        default_bitwidth_textbox_layout.addWidget(self.default_bitwidth_textbox)
+        default_bitwidth_textbox_layout.addStretch()
+
+        configurable_options_grid_layout.addWidget(default_bitwidth_label, 3, 0)
+        configurable_options_grid_layout.addLayout(default_bitwidth_textbox_layout, 3, 1)
+
+        QtWidgets.QHBoxLayout()
+        generate_quantum_operation_annotations_option_label = QtWidgets.QLabel("Generate quantum operation annotations")
+        self.generate_quantum_operation_annotations_option_checkbox = QtWidgets.QCheckBox()
+        if self.configurable_parser_and_synthesis_options.generate_quantum_operation_annotations:
+            self.generate_quantum_operation_annotations_option_checkbox.setCheckState(QtCore.Qt.CheckState.Checked)
+        else:
+            self.generate_quantum_operation_annotations_option_checkbox.setCheckState(QtCore.Qt.CheckState.Unchecked)
+
+        configurable_options_grid_layout.addWidget(generate_quantum_operation_annotations_option_label, 4, 0)
+        configurable_options_grid_layout.addWidget(self.generate_quantum_operation_annotations_option_checkbox, 4, 1)
 
         save_settings_button_layout = QtWidgets.QHBoxLayout()
-        save_settings_button_layout.addStretch()
-
         save_settings_button = QtWidgets.QPushButton("Save")
         save_settings_button.clicked.connect(self.save_settings)
+
         save_settings_button_layout.addWidget(save_settings_button)
         save_settings_button_layout.addStretch()
+        configurable_options_grid_layout.addLayout(save_settings_button_layout, 5, 1)
 
-        layout.addLayout(expected_main_module_identifier_layout)
-        layout.addLayout(generate_inlined_qubit_debug_information_layout)
-        layout.addLayout(integer_constant_truncation_operation_selection_layout)
-        layout.addLayout(default_bitwidth_layout)
-        layout.addLayout(save_settings_button_layout)
-        layout.addStretch()
-        self.setLayout(layout)
+        dialog_layout.addLayout(configurable_options_grid_layout)
+        dialog_layout.addStretch()
+        self.setLayout(dialog_layout)
 
     def save_settings(self) -> QtWidgets.QDialog.DialogCode:
         mapped_to_integer_constant_truncation_operation: syrec.integer_constant_truncation_operation | None = None
@@ -1222,6 +1239,9 @@ class ConfigurableOptionsUpdated(QtWidgets.QDialog):  # type: ignore[misc]
             mapped_to_integer_constant_truncation_operation
         )
         self.configurable_parser_and_synthesis_options.default_bitwidth = int(self.default_bitwidth_textbox.text())
+        self.configurable_parser_and_synthesis_options.generate_quantum_operation_annotations = (
+            self.generate_quantum_operation_annotations_option_checkbox.isChecked()
+        )
         return self.accept()
 
 
