@@ -275,8 +275,6 @@ The parser will not report an overlap in the assignment due to the index of the 
 
 - The value of the step size of a ForStatement cannot be defined as or evaluate to 0 to prevent an infinite loop.
 
-````{warning}
-
 Uncalling modules containing a _ForStatement_ could lead to unexpected index-out-of-range errors if one is not familiar with the semantics of how a _ForStatement_ or more specifically its value range is inverted, with the inversion semantics being inherited by SyReC from its reversible programming language predecessor Janus {cite:p}`yokoyama2007janus`.
 
 A loop (_ForStatement_) defined as {math}`for \ e_1 \ to \ e_2 \ step \ s \ do \ s_1, s_2, \dots, s_n \ rof`
@@ -305,8 +303,6 @@ module main(inout a(4), inout b(4))
  // ++= b.$i and --= a.$i would both result in an index-out-of-range error.
  uncall basicBitwiseIncr(a, b)
 ```
-
-````
 
 ### IfStatement
 
